@@ -246,13 +246,20 @@ def huggingface_llm(messages):
         return response.choices[0].message.content.strip()
 
     except Exception as e:
+        import traceback
         error_msg = str(e)
+        full_error = traceback.format_exc()
+        print(f"HuggingFace Error: {error_msg}")
+        print(f"Full traceback:\n{full_error}")
+
         if "rate limit" in error_msg.lower():
             return "I'm currently experiencing rate limits. Please try again in a moment, or consider adding a Hugging Face API token for unlimited access."
         elif "not supported" in error_msg.lower() or "conversational" in error_msg.lower():
             # Fallback to a simpler approach
             return huggingface_llm_simple(messages)
-        return f"Error calling Hugging Face: {error_msg}"
+
+        # Return detailed error for debugging
+        return f"Error calling Hugging Face: {error_msg}\n\nFull error: {repr(e)}"
 
 
 def huggingface_llm_simple(messages):
@@ -277,7 +284,10 @@ def huggingface_llm_simple(messages):
 
         return response.strip()
     except Exception as e:
-        return f"I apologize, but I'm having trouble connecting to the AI service. Error: {str(e)}\n\nTip: You can switch back to mock mode by changing LLM_MODE=mock in your .env file, or get a free Hugging Face token at https://huggingface.co/settings/tokens"
+        import traceback
+        print(f"HuggingFace Simple Error: {str(e)}")
+        print(f"Full traceback:\n{traceback.format_exc()}")
+        return f"I apologize, but I'm having trouble connecting to the AI service. Error: {str(e)}\n\nFull error: {repr(e)}\n\nTip: You can switch back to mock mode by changing LLM_MODE=mock in your .env file, or get a free Hugging Face token at https://huggingface.co/settings/tokens"
 
 
 def call_llm(messages, model="gpt-3.5-turbo"):
