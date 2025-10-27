@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive LLM Explainers - Learn How AI Thinks</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .gradient-bg-green {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+
+        .gradient-bg-blue {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .gradient-bg-orange {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+
+        .theory-box {
+            background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%);
+            border-left: 5px solid #00acc1;
+        }
+
+        .explanation-box {
+            background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
+            border-left: 5px solid #9c27b0;
+        }
+
+        .demo-box {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .demo-box:hover {
+            border-color: #667eea;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
+        }
+
+        .slider-container {
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            margin: 16px 0;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 5px;
+            background: linear-gradient(to right, #667eea 0%, #764ba2 100%);
+            outline: none;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+
+        input[type="range"]:hover {
+            opacity: 1;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        .word-box {
+            display: inline-block;
+            padding: 8px 16px;
+            margin: 4px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .vote-bar {
+            height: 8px;
+            background: linear-gradient(to right, #667eea, #764ba2);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Theory Box Component
+        function TheoryBox({ title, children }) {
+            return (
+                <div className="theory-box p-6 rounded-lg mb-6">
+                    <h4 className="text-lg font-bold text-cyan-900 mb-3 flex items-center gap-2">
+                        📚 {title}
+                    </h4>
+                    <div className="text-cyan-900 leading-relaxed space-y-2">
+                        {children}
+                    </div>
+                </div>
+            );
+        }
+
+        // Explanation Box Component
+        function ExplanationBox({ title, children }) {
+            return (
+                <div className="explanation-box p-5 rounded-lg mb-4">
+                    <h4 className="text-md font-bold text-purple-900 mb-2 flex items-center gap-2">
+                        💡 {title}
+                    </h4>
+                    <div className="text-purple-900 text-sm leading-relaxed">
+                        {children}
+                    </div>
+                </div>
+            );
+        }
+
+        // Voting Council Demo
+        function VotingCouncilDemo() {
+            const [recencyWeight, setRecencyWeight] = useState(0.5);
+            const [relevanceWeight, setRelevanceWeight] = useState(0.5);
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            const context = ["Australia's", "capital", "is", "a", "beautiful"];
+            const candidates = ["city", "Sydney", "Canberra", "Melbourne", "place"];
+
+            // Simulate how each context word "votes" for each candidate
+            const calculateVotes = (candidate) => {
+                // Simplified similarity scores (in reality, these would be computed from embeddings)
+                const relevanceScores = {
+                    "Australia's": {"city": 0.3, "Sydney": 0.7, "Canberra": 0.8, "Melbourne": 0.7, "place": 0.4},
+                    "capital": {"city": 0.7, "Sydney": 0.5, "Canberra": 0.9, "Melbourne": 0.5, "place": 0.5},
+                    "is": {"city": 0.2, "Sydney": 0.2, "Canberra": 0.2, "Melbourne": 0.2, "place": 0.2},
+                    "a": {"city": 0.3, "Sydney": 0.2, "Canberra": 0.2, "Melbourne": 0.2, "place": 0.4},
+                    "beautiful": {"city": 0.6, "Sydney": 0.5, "Canberra": 0.4, "Melbourne": 0.5, "place": 0.7}
+                };
+
+                let totalVote = 0;
+                context.forEach((word, idx) => {
+                    // Recency: later words have more influence
+                    const recencyBoost = 1 + (recencyWeight * (idx / context.length));
+
+                    // Relevance: how semantically related the context word is to the candidate
+                    const relevance = relevanceScores[word][candidate] || 0.1;
+                    const relevanceBoost = 1 + (relevanceWeight * relevance);
+
+                    // Combined vote
+                    const vote = recencyBoost * relevanceBoost;
+                    totalVote += vote;
+                });
+
+                return totalVote;
+            };
+
+            // Calculate votes for all candidates
+            const votes = candidates.map(c => calculateVotes(c));
+            const maxVote = Math.max(...votes);
+            const normalizedVotes = votes.map(v => v / maxVote);
+
+            // Apply softmax to get probabilities
+            const softmax = (arr) => {
+                const exp = arr.map(x => Math.exp(x * 3)); // Scale for visibility
+                const sum = exp.reduce((a, b) => a + b, 0);
+                return exp.map(x => x / sum);
+            };
+
+            const probabilities = softmax(normalizedVotes);
+
+            useEffect(() => {
+                if (chartRef.current) {
+                    const ctx = chartRef.current.getContext('2d');
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: candidates,
+                            datasets: [{
+                                label: 'Probability',
+                                data: probabilities,
+                                backgroundColor: probabilities.map((p, i) =>
+                                    i === probabilities.indexOf(Math.max(...probabilities)) ?
+                                    'rgba(102, 126, 234, 0.8)' : 'rgba(102, 126, 234, 0.4)'
+                                ),
+                                borderColor: probabilities.map((p, i) =>
+                                    i === probabilities.indexOf(Math.max(...probabilities)) ?
+                                    '#667eea' : 'rgba(102, 126, 234, 0.6)'
+                                ),
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: (ctx) => `Probability: ${(ctx.parsed.y * 100).toFixed(1)}%`
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    min: 0,
+                                    max: 1,
+                                    ticks: {
+                                        callback: (value) => `${(value * 100).toFixed(0)}%`
+                                    },
+                                    grid: { color: 'rgba(0,0,0,0.05)' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [recencyWeight, relevanceWeight]);
+
+            const winningCandidate = candidates[probabilities.indexOf(Math.max(...probabilities))];
+
+            return (
+                <div className="demo-box p-8">
+                    <h2 className="text-3xl font-bold mb-2 text-gray-800">🗳️ Voting Council Demo</h2>
+                    <p className="text-gray-600 mb-6">
+                        Understand attention: How each context word "votes" for the next token
+                    </p>
+
+                    <TheoryBox title="How Attention Works">
+                        <p className="mb-3">
+                            Think of the attention mechanism as a <strong>voting council</strong>. When predicting the next word,
+                            each previous word in the context casts a "vote" for what should come next.
+                        </p>
+                        <div className="bg-white p-4 rounded-lg border-2 border-cyan-200">
+                            <p className="font-semibold mb-2">The Voting Process:</p>
+                            <ol className="list-decimal list-inside space-y-1 text-sm">
+                                <li><strong>Recency Bias</strong>: Recent words often vote more strongly</li>
+                                <li><strong>Semantic Relevance</strong>: Words semantically related to a candidate boost its vote</li>
+                                <li><strong>Weighted Sum</strong>: All votes are combined with weights (attention scores)</li>
+                                <li><strong>Softmax</strong>: Convert votes to probabilities that sum to 100%</li>
+                            </ol>
+                        </div>
+                    </TheoryBox>
+
+                    <ExplanationBox title="Interactive Demo">
+                        Adjust the sliders to see how recency and relevance affect which word wins!
+                        Context: <strong>{context.join(' ')} ___</strong>
+                    </ExplanationBox>
+
+                    <div className="slider-container">
+                        <label className="block mb-2 font-semibold text-gray-800">
+                            Recency Influence: <span className="text-purple-600">{recencyWeight.toFixed(2)}</span>
+                        </label>
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={recencyWeight}
+                            onChange={(e) => setRecencyWeight(parseFloat(e.target.value))}
+                        />
+                        <p className="text-sm text-gray-600 mt-2">
+                            Higher = later words in context have more influence
+                        </p>
+                    </div>
+
+                    <div className="slider-container">
+                        <label className="block mb-2 font-semibold text-gray-800">
+                            Relevance Influence: <span className="text-purple-600">{relevanceWeight.toFixed(2)}</span>
+                        </label>
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={relevanceWeight}
+                            onChange={(e) => setRelevanceWeight(parseFloat(e.target.value))}
+                        />
+                        <p className="text-sm text-gray-600 mt-2">
+                            Higher = semantically similar words have more influence
+                        </p>
+                    </div>
+
+                    <div className="mt-8 bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-lg border-2 border-purple-200">
+                        <h3 className="font-bold text-lg mb-3">Voting Results</h3>
+                        <div style={{height: '300px'}}>
+                            <canvas ref={chartRef}></canvas>
+                        </div>
+                        <div className="mt-4 text-center">
+                            <p className="text-2xl font-bold text-purple-700">
+                                Winner: "{winningCandidate}" with {(Math.max(...probabilities) * 100).toFixed(1)}% probability
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 bg-blue-50 p-5 rounded-lg">
+                        <p className="text-sm text-blue-900">
+                            <strong>💡 Real LLMs:</strong> In actual transformers, this voting happens through the attention mechanism.
+                            Each word computes "query" vectors, and other words compute "key" and "value" vectors.
+                            The dot product of queries and keys determines voting weights, which are then used to combine values.
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        // Probability Funnel Demo
+        function ProbabilityFunnelDemo() {
+            const [temperature, setTemperature] = useState(1.0);
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            // Example logits (raw model outputs before softmax)
+            const tokens = ["Canberra", "Sydney", "Melbourne", "city", "town"];
+            const logits = [8.5, 7.2, 6.8, 5.5, 3.0];
+
+            // Apply temperature scaling and softmax
+            const softmax = (logits, temp) => {
+                const scaled = logits.map(x => x / temp);
+                const exp = scaled.map(x => Math.exp(x));
+                const sum = exp.reduce((a, b) => a + b, 0);
+                return exp.map(x => x / sum);
+            };
+
+            const probabilities = softmax(logits, temperature);
+
+            useEffect(() => {
+                if (chartRef.current) {
+                    const ctx = chartRef.current.getContext('2d');
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: tokens,
+                            datasets: [{
+                                label: 'Probability',
+                                data: probabilities,
+                                backgroundColor: 'rgba(255, 152, 0, 0.7)',
+                                borderColor: '#ff9800',
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: (ctx) => `Probability: ${(ctx.parsed.y * 100).toFixed(1)}%`
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    min: 0,
+                                    max: 1,
+                                    ticks: {
+                                        callback: (value) => `${(value * 100).toFixed(0)}%`
+                                    },
+                                    grid: { color: 'rgba(0,0,0,0.05)' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [temperature]);
+
+            // Calculate entropy (measure of randomness)
+            const entropy = -probabilities.reduce((sum, p) => sum + (p > 0 ? p * Math.log2(p) : 0), 0);
+            const maxEntropy = Math.log2(tokens.length);
+            const normalizedEntropy = entropy / maxEntropy;
+
+            return (
+                <div className="demo-box p-8">
+                    <h2 className="text-3xl font-bold mb-2 text-gray-800">🌡️ Probability Funnel Demo</h2>
+                    <p className="text-gray-600 mb-6">
+                        Explore temperature: How LLMs control randomness vs. confidence
+                    </p>
+
+                    <TheoryBox title="What is Temperature?">
+                        <p className="mb-3">
+                            <strong>Temperature</strong> is a parameter that controls how "confident" or "random" the model's
+                            predictions are. It transforms raw scores (logits) into probabilities using the softmax function.
+                        </p>
+                        <div className="bg-white p-4 rounded-lg border-2 border-cyan-200">
+                            <p className="font-semibold mb-2">The Softmax Formula with Temperature:</p>
+                            <pre className="text-xs font-mono bg-gray-100 p-3 rounded overflow-x-auto">
+{`P(token_i) = exp(logit_i / T) / Σ exp(logit_j / T)
+
+Where:
+• T = temperature
+• T = 0.1 → sharp distribution (confident)
+• T = 1.0 → standard distribution
+• T = 2.0 → flat distribution (random)`}
+                            </pre>
+                        </div>
+                    </TheoryBox>
+
+                    <ExplanationBox title="Interactive Demo">
+                        Adjust temperature to see how it affects the probability distribution!
+                        Lower = more confident (picks top choice), Higher = more exploratory (considers more options)
+                    </ExplanationBox>
+
+                    <div className="slider-container">
+                        <label className="block mb-2 font-semibold text-gray-800">
+                            Temperature: <span className="text-orange-600 text-2xl">{temperature.toFixed(2)}</span>
+                        </label>
+                        <input
+                            type="range"
+                            min="0.1"
+                            max="2.0"
+                            step="0.1"
+                            value={temperature}
+                            onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                            style={{
+                                background: `linear-gradient(to right, #0088ff ${((temperature - 0.1) / 1.9 * 100)}%, #ff4444 ${((temperature - 0.1) / 1.9 * 100)}%)`
+                            }}
+                        />
+                        <div className="flex justify-between text-sm text-gray-600 mt-2">
+                            <span>❄️ Cold (confident)</span>
+                            <span>🔥 Hot (random)</span>
+                        </div>
+                    </div>
+
+                    <div className="mt-8 bg-gradient-to-r from-orange-50 to-yellow-50 p-6 rounded-lg border-2 border-orange-200">
+                        <h3 className="font-bold text-lg mb-3">Probability Distribution</h3>
+                        <div style={{height: '300px'}}>
+                            <canvas ref={chartRef}></canvas>
+                        </div>
+                        <div className="mt-4 grid grid-cols-3 gap-4">
+                            <div className="bg-white p-3 rounded text-center">
+                                <p className="text-gray-500 text-xs">Top Choice</p>
+                                <p className="font-bold text-xl">{(Math.max(...probabilities) * 100).toFixed(1)}%</p>
+                            </div>
+                            <div className="bg-white p-3 rounded text-center">
+                                <p className="text-gray-500 text-xs">Entropy</p>
+                                <p className="font-bold text-xl">{(normalizedEntropy * 100).toFixed(0)}%</p>
+                            </div>
+                            <div className="bg-white p-3 rounded text-center">
+                                <p className="text-gray-500 text-xs">Diversity</p>
+                                <p className="font-bold text-xl">
+                                    {probabilities.filter(p => p > 0.01).length}/{tokens.length}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-blue-50 p-5 rounded-lg">
+                            <h4 className="font-bold mb-2 text-blue-900">Low Temperature (0.1-0.5)</h4>
+                            <p className="text-sm text-blue-800">
+                                Sharp peak. Model is very confident. Good for factual tasks where there's one correct answer.
+                                Example: "What's 2+2?" → Always picks "4"
+                            </p>
+                        </div>
+                        <div className="bg-green-50 p-5 rounded-lg">
+                            <h4 className="font-bold mb-2 text-green-900">Medium Temperature (0.7-1.0)</h4>
+                            <p className="text-sm text-green-800">
+                                Balanced. Some randomness but still coherent. Good for most conversational tasks.
+                                Example: "Tell me a story" → Natural variation
+                            </p>
+                        </div>
+                        <div className="bg-red-50 p-5 rounded-lg">
+                            <h4 className="font-bold mb-2 text-red-900">High Temperature (1.5-2.0)</h4>
+                            <p className="text-sm text-red-800">
+                                Flat distribution. Very random. Good for creative tasks where you want unexpected outputs.
+                                Example: "Write a surreal poem" → Highly creative
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 bg-purple-50 p-5 rounded-lg">
+                        <p className="text-sm text-purple-900">
+                            <strong>💡 In Practice:</strong> Temperature is often combined with other sampling methods like
+                            top-k (only consider top k tokens) or nucleus sampling (consider tokens that sum to p probability).
+                            This gives even more control over the creativity-coherence tradeoff.
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            return (
+                <div className="min-h-screen py-8 px-4">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="gradient-bg rounded-2xl p-8 mb-8 text-white shadow-2xl">
+                            <h1 className="text-4xl font-bold mb-3">🎓 Interactive LLM Explainers</h1>
+                            <p className="text-xl opacity-90">
+                                Learn how Large Language Models think through interactive demonstrations
+                            </p>
+                            <p className="text-sm opacity-75 mt-2">
+                                No math background needed - these visual demos make complex concepts intuitive!
+                            </p>
+                        </div>
+
+                        {/* Back Button */}
+                        <div className="mb-8">
+                            <a
+                                href="index.html"
+                                className="inline-flex items-center gap-2 bg-white px-6 py-3 rounded-lg font-semibold text-gray-800 hover:bg-gray-100 transition-all shadow-md"
+                            >
+                                ← Back to Main App
+                            </a>
+                        </div>
+
+                        {/* Introduction */}
+                        <div className="bg-white rounded-xl p-8 shadow-lg mb-8">
+                            <h2 className="text-2xl font-bold mb-4 text-gray-800">📖 About These Demos</h2>
+                            <p className="text-gray-700 leading-relaxed mb-4">
+                                These interactive demonstrations help you understand the fundamental mechanisms that make
+                                Large Language Models work. Instead of abstract mathematical concepts, you'll see
+                                <strong> visual metaphors and interactive controls</strong> that make the ideas tangible.
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                                <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-lg">
+                                    <h3 className="font-bold text-lg mb-2">🗳️ Voting Council</h3>
+                                    <p className="text-sm text-gray-700">
+                                        Understand the <strong>attention mechanism</strong> by seeing how each word in the
+                                        context "votes" for what should come next. Adjust recency and relevance to see
+                                        how votes change!
+                                    </p>
+                                </div>
+                                <div className="bg-gradient-to-br from-orange-50 to-yellow-50 p-6 rounded-lg">
+                                    <h3 className="font-bold text-lg mb-2">🌡️ Probability Funnel</h3>
+                                    <p className="text-sm text-gray-700">
+                                        Explore how <strong>temperature</strong> controls the randomness of LLM outputs.
+                                        See the softmax function in action and understand confidence vs. creativity!
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Demo 1: Voting Council */}
+                        <div className="mb-12">
+                            <VotingCouncilDemo />
+                        </div>
+
+                        {/* Demo 2: Probability Funnel */}
+                        <div className="mb-12">
+                            <ProbabilityFunnelDemo />
+                        </div>
+
+                        {/* Additional Resources */}
+                        <div className="gradient-bg-blue rounded-xl p-8 text-white text-center">
+                            <h3 className="text-2xl font-bold mb-3">🚀 Ready to See It in Action?</h3>
+                            <p className="text-lg mb-4">
+                                Go back to the main app and watch how these concepts work with real AI responses!
+                            </p>
+                            <a
+                                href="index.html"
+                                className="inline-block bg-white text-blue-700 px-8 py-3 rounded-lg font-bold text-lg hover:bg-gray-100 transition-all transform hover:scale-105"
+                            >
+                                🎯 Back to Main App
+                            </a>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="mt-12 text-center text-gray-600 text-sm">
+                            <p>Built to make AI concepts accessible to everyone</p>
+                            <p className="mt-2">Concepts based on transformer architecture and attention mechanisms</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

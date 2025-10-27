@@ -6,11 +6,24 @@ import random
 from datetime import datetime
 import re
 from collections import Counter
+import numpy as np
+from typing import List, Optional, Dict
+import math
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# Initialize embedding model for semantic similarity
+embedding_model = None
+try:
+    from sentence_transformers import SentenceTransformer
+    embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    print("✅ Semantic similarity analysis enabled (sentence-transformers loaded)")
+except Exception as e:
+    print(f"⚠️  Semantic similarity unavailable: {e}")
+    print("   Install with: pip install sentence-transformers")
 
 # Determine which LLM mode to use
 LLM_MODE = os.getenv('LLM_MODE', 'mock').lower()  # Options: 'mock', 'huggingface', 'openai', 'groq'
@@ -53,11 +66,70 @@ elif LLM_MODE == 'openai':
 sessions = {}
 
 
+def split_sentences(text: str) -> List[str]:
+    """Split text into sentences"""
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    return sentences if sentences else [text.strip()] if text.strip() else []
+
+
+def compute_embedding(text: str) -> Optional[List[float]]:
+    """Compute semantic embedding for text"""
+    if embedding_model is None:
+        return None
+    try:
+        vec = embedding_model.encode([text], normalize_embeddings=True)[0]
+        return vec.tolist()
+    except Exception as e:
+        print(f"Embedding error: {e}")
+        return None
+
+
+def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """Compute cosine similarity between two vectors"""
+    v1 = np.array(vec1)
+    v2 = np.array(vec2)
+    return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9))
+
+
+def vector_angle(vec1: List[float], vec2: List[float]) -> float:
+    """Compute angle in degrees between two vectors"""
+    cos_sim = cosine_similarity(vec1, vec2)
+    cos_sim = np.clip(cos_sim, -1.0, 1.0)
+    angle = math.degrees(math.acos(cos_sim))
+    return angle
+
+
+def plain_explanation(cos_sim: float) -> str:
+    """Generate plain-English explanation of semantic change"""
+    if cos_sim > 0.95:
+        return "Tiny tweak: The answer barely changed, just minor wording adjustments."
+    if cos_sim > 0.85:
+        return "Small adjustment: The answer shifted slightly to fit your correction."
+    if cos_sim > 0.70:
+        return "Moderate change: The model re-aimed its answer meaningfully."
+    if cos_sim > 0.40:
+        return "Big change: The model reconsidered and moved to a new idea."
+    return "Major rethink: The model changed direction significantly based on your feedback."
+
+
+def jaccard_similarity(text1: str, text2: str) -> float:
+    """Compute word overlap similarity (Jaccard coefficient)"""
+    words1 = set(re.findall(r'\b\w+\b', text1.lower()))
+    words2 = set(re.findall(r'\b\w+\b', text2.lower()))
+    if not words1 and not words2:
+        return 1.0
+    if not words1 or not words2:
+        return 0.0
+    intersection = len(words1 & words2)
+    union = len(words1 | words2)
+    return intersection / union if union > 0 else 0.0
+
+
 def analyze_text(text):
     """Analyze text for various metrics"""
     words = text.split()
-    sentences = re.split(r'[.!?]+', text)
-    sentences = [s.strip() for s in sentences if s.strip()]
+    sentences = split_sentences(text)
 
     # Word frequency (top 10 meaningful words)
     stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'was', 'are', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'it', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'they', 'we', 'my', 'your', 'his', 'her', 'their', 'our'}
@@ -89,7 +161,8 @@ def analyze_text(text):
         'confidence_score': round(confidence_score, 2),
         'positive_indicators': positive_count,
         'negative_indicators': negative_count,
-        'uncertainty_indicators': uncertain_count
+        'uncertainty_indicators': uncertain_count,
+        'sentences': sentences
     }
 
 
@@ -423,6 +496,16 @@ def start_session():
     response = call_llm(messages)
     analysis = analyze_text(response)
 
+    # Compute semantic embedding
+    embedding = compute_embedding(response)
+
+    # Compute sentence embeddings
+    sentence_embeddings = []
+    if embedding_model is not None and analysis.get('sentences'):
+        for sent in analysis['sentences']:
+            sent_emb = compute_embedding(sent)
+            sentence_embeddings.append(sent_emb)
+
     # Create session
     sessions[session_id] = {
         'question': question,
@@ -432,6 +515,8 @@ def start_session():
                 'type': 'initial',
                 'response': response,
                 'analysis': analysis,
+                'embedding': embedding,
+                'sentence_embeddings': sentence_embeddings,
                 'messages': messages + [{"role": "assistant", "content": response}],
                 'timestamp': datetime.now().isoformat()
             }
@@ -467,6 +552,16 @@ def correct():
     response = call_llm(messages)
     analysis = analyze_text(response)
 
+    # Compute semantic embedding
+    embedding = compute_embedding(response)
+
+    # Compute sentence embeddings
+    sentence_embeddings = []
+    if embedding_model is not None and analysis.get('sentences'):
+        for sent in analysis['sentences']:
+            sent_emb = compute_embedding(sent)
+            sentence_embeddings.append(sent_emb)
+
     # Save interaction
     turn = len(session['interactions'])
     messages.append({"role": "assistant", "content": response})
@@ -477,6 +572,8 @@ def correct():
         'correction': correction,
         'response': response,
         'analysis': analysis,
+        'embedding': embedding,
+        'sentence_embeddings': sentence_embeddings,
         'messages': messages,
         'timestamp': datetime.now().isoformat()
     })
@@ -513,6 +610,132 @@ def get_session(session_id):
     })
 
 
+@app.route('/api/semantic-analysis/<session_id>', methods=['GET'])
+def semantic_analysis(session_id):
+    """Compute comprehensive semantic similarity analysis"""
+    if session_id not in sessions:
+        return jsonify({'error': 'Session not found'}), 404
+
+    if embedding_model is None:
+        return jsonify({'error': 'Semantic analysis unavailable - sentence-transformers not installed'}), 503
+
+    session = sessions[session_id]
+    interactions = session['interactions']
+
+    # Extract all embeddings and texts
+    embeddings = []
+    texts = []
+    sentences_list = []
+    for inter in interactions:
+        if inter.get('embedding'):
+            embeddings.append(inter['embedding'])
+            texts.append(inter['response'])
+            sentences_list.append(inter['analysis'].get('sentences', []))
+
+    if len(embeddings) < 2:
+        return jsonify({'message': 'Need at least 2 responses for comparison'}), 400
+
+    # Compute similarity matrix
+    n = len(embeddings)
+    similarity_matrix = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            sim = cosine_similarity(embeddings[i], embeddings[j])
+            row.append(round(float(sim), 4))
+        similarity_matrix.append(row)
+
+    # Compute step-by-step changes
+    changes = []
+    for i in range(1, n):
+        prev_emb = embeddings[i-1]
+        curr_emb = embeddings[i]
+
+        cos_sim = cosine_similarity(prev_emb, curr_emb)
+        angle = vector_angle(prev_emb, curr_emb)
+        jaccard = jaccard_similarity(texts[i-1], texts[i])
+
+        # Compute length change
+        len_change_pct = ((len(texts[i]) - len(texts[i-1])) / max(len(texts[i-1]), 1)) * 100
+
+        changes.append({
+            'from_turn': i-1,
+            'to_turn': i,
+            'cosine_similarity': round(float(cos_sim), 4),
+            'angle_degrees': round(float(angle), 2),
+            'jaccard_similarity': round(float(jaccard), 4),
+            'length_change_pct': round(float(len_change_pct), 2),
+            'explanation': plain_explanation(cos_sim)
+        })
+
+    # Project vectors to 2D for visualization
+    projection_2d = None
+    try:
+        from sklearn.decomposition import PCA
+        X = np.array(embeddings)
+
+        if n >= 2:
+            try:
+                # Try UMAP first (better for visualization)
+                import umap
+                n_neighbors = max(2, min(5, n - 1))
+                reducer = umap.UMAP(n_components=2, random_state=42,
+                                   n_neighbors=n_neighbors, min_dist=0.3)
+                coords = reducer.fit_transform(X)
+                projection_2d = {
+                    'method': 'umap',
+                    'coordinates': [[round(float(x), 4), round(float(y), 4)]
+                                   for x, y in coords]
+                }
+            except:
+                # Fallback to PCA
+                pca = PCA(n_components=2)
+                coords = pca.fit_transform(X)
+                projection_2d = {
+                    'method': 'pca',
+                    'coordinates': [[round(float(x), 4), round(float(y), 4)]
+                                   for x, y in coords],
+                    'explained_variance': [round(float(v), 4)
+                                          for v in pca.explained_variance_ratio_]
+                }
+    except Exception as e:
+        print(f"Projection error: {e}")
+
+    # Sentence-level similarity for latest two responses
+    sentence_comparison = None
+    if len(interactions) >= 2 and len(sentences_list) >= 2:
+        prev_sents = sentences_list[-2]
+        curr_sents = sentences_list[-1]
+        prev_sent_embs = interactions[-2].get('sentence_embeddings', [])
+        curr_sent_embs = interactions[-1].get('sentence_embeddings', [])
+
+        if prev_sent_embs and curr_sent_embs and prev_sents and curr_sents:
+            sent_matrix = []
+            for prev_emb in prev_sent_embs:
+                row = []
+                for curr_emb in curr_sent_embs:
+                    if prev_emb and curr_emb:
+                        sim = cosine_similarity(prev_emb, curr_emb)
+                        row.append(round(float(sim), 4))
+                    else:
+                        row.append(0.0)
+                sent_matrix.append(row)
+
+            sentence_comparison = {
+                'previous_sentences': prev_sents,
+                'current_sentences': curr_sents,
+                'similarity_matrix': sent_matrix
+            }
+
+    return jsonify({
+        'similarity_matrix': similarity_matrix,
+        'changes': changes,
+        'projection_2d': projection_2d,
+        'sentence_comparison': sentence_comparison,
+        'num_interactions': n
+    })
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -534,7 +757,8 @@ def health():
         'sessions': len(sessions),
         'mode': LLM_MODE,
         'message': messages.get(LLM_MODE, f'Running in {LLM_MODE} mode'),
-        'model': model_info
+        'model': model_info,
+        'semantic_analysis': embedding_model is not None
     })
 
 

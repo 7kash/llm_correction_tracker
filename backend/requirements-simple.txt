@@ -3,3 +3,7 @@ flask-cors==4.0.0
 python-dotenv==1.0.0
 groq>=0.4.0
 huggingface-hub>=0.20.0
+sentence-transformers>=2.0.0
+scikit-learn>=1.0.0
+numpy>=1.21.0
+umap-learn>=0.5.0
