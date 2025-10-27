@@ -12,11 +12,27 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# Check if we should use mock mode (no API key required)
-USE_MOCK_MODE = os.getenv('USE_MOCK_MODE', 'true').lower() == 'true'
+# Determine which LLM mode to use
+LLM_MODE = os.getenv('LLM_MODE', 'mock').lower()  # Options: 'mock', 'huggingface', 'openai'
 
-# Configure OpenAI only if not in mock mode
-if not USE_MOCK_MODE:
+# Configure based on mode
+if LLM_MODE == 'huggingface':
+    from huggingface_hub import InferenceClient
+    HF_TOKEN = os.getenv('HUGGING_FACE_TOKEN')
+    # Use a model that works well with the free API
+    HF_MODEL = os.getenv('HUGGING_FACE_MODEL', 'HuggingFaceH4/zephyr-7b-beta')
+
+    if HF_TOKEN:
+        hf_client = InferenceClient(token=HF_TOKEN)
+        print(f"✅ Using Hugging Face model: {HF_MODEL} with authentication")
+    else:
+        # Use public API (with rate limits)
+        hf_client = InferenceClient()
+        print(f"⚠️  Warning: No Hugging Face token provided. Using free public API with rate limits.")
+        print(f"   Using model: {HF_MODEL}")
+        print(f"   Get a FREE token at: https://huggingface.co/settings/tokens")
+
+elif LLM_MODE == 'openai':
     import openai
     openai.api_key = os.getenv('OPENAI_API_KEY')
 
@@ -201,21 +217,61 @@ def _generate_generic_response(question):
     return random.choice(templates)
 
 
+def huggingface_llm(messages):
+    """Call Hugging Face Inference API"""
+    try:
+        # Convert messages to a single prompt for the model
+        prompt = ""
+        for msg in messages:
+            role = msg['role']
+            content = msg['content']
+            if role == 'system':
+                prompt += f"<s>[INST] {content} [/INST]\n"
+            elif role == 'user':
+                prompt += f"[INST] {content} [/INST]\n"
+            elif role == 'assistant':
+                prompt += f"{content}\n"
+
+        # Call Hugging Face API
+        response = hf_client.text_generation(
+            prompt,
+            model=HF_MODEL,
+            max_new_tokens=500,
+            temperature=0.7,
+            return_full_text=False,
+        )
+
+        return response.strip()
+
+    except Exception as e:
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower():
+            return "I'm currently experiencing rate limits. Please try again in a moment, or consider adding a Hugging Face API token for unlimited access."
+        return f"Error calling Hugging Face: {error_msg}"
+
+
 def call_llm(messages, model="gpt-3.5-turbo"):
-    """Call LLM (either mock or real OpenAI API)"""
-    if USE_MOCK_MODE:
+    """Call LLM based on configured mode"""
+    if LLM_MODE == 'mock':
         return mock_llm(messages)
 
-    try:
-        response = openai.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=500
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error calling LLM: {str(e)}"
+    elif LLM_MODE == 'huggingface':
+        return huggingface_llm(messages)
+
+    elif LLM_MODE == 'openai':
+        try:
+            response = openai.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=500
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error calling OpenAI: {str(e)}"
+
+    else:
+        return f"Unknown LLM mode: {LLM_MODE}"
 
 
 @app.route('/api/start-session', methods=['POST'])
@@ -327,11 +383,18 @@ def get_session(session_id):
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
+    messages = {
+        'mock': 'Running in MOCK mode - simulated AI responses, no API needed!',
+        'huggingface': f'Running with Hugging Face model: {HF_MODEL}' if LLM_MODE == 'huggingface' else '',
+        'openai': 'Running with OpenAI API'
+    }
+
     return jsonify({
         'status': 'healthy',
         'sessions': len(sessions),
-        'mode': 'mock' if USE_MOCK_MODE else 'openai',
-        'message': 'Running in MOCK mode - no API key needed!' if USE_MOCK_MODE else 'Running with OpenAI API'
+        'mode': LLM_MODE,
+        'message': messages.get(LLM_MODE, f'Running in {LLM_MODE} mode'),
+        'model': HF_MODEL if LLM_MODE == 'huggingface' else None
     })
 
 
