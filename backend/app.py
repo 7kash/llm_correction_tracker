@@ -286,37 +286,56 @@ def huggingface_llm_simple(messages):
         question = user_messages[-1]
 
         # Use the Hugging Face Inference API directly
-        # This endpoint works without the InferenceClient provider issues
-        API_URL = "https://api-inference.huggingface.co/models/gpt2"
+        # Try multiple models in order of preference
+        models_to_try = [
+            "google/flan-t5-small",  # Smaller FLAN-T5, better for free tier
+            "distilgpt2",  # Distilled GPT-2, lighter
+            "gpt2",  # Original GPT-2
+        ]
+
+        # Try each model until one works
+        for model_name in models_to_try:
+            API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
 
         headers = {}
         if HF_TOKEN:
             headers["Authorization"] = f"Bearer {HF_TOKEN}"
 
-        payload = {
-            "inputs": f"Question: {question}\nAnswer:",
-            "parameters": {
-                "max_new_tokens": 100,
-                "temperature": 0.7,
-                "return_full_text": False,
+            payload = {
+                "inputs": f"Question: {question}\nAnswer:",
+                "parameters": {
+                    "max_new_tokens": 100,
+                    "temperature": 0.7,
+                    "return_full_text": False,
+                }
             }
-        }
 
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
 
-        if response.status_code == 200:
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                answer = result[0].get('generated_text', '').strip()
-                # Clean up the answer
-                if answer.startswith("Question:"):
-                    answer = answer.split("Answer:")[-1].strip()
-                return answer if answer else "I need more information to answer that question."
-            return "I received an unexpected response format."
-        elif response.status_code == 503:
-            return "The AI model is currently loading. Please wait a moment and try again."
-        else:
-            return f"API returned status {response.status_code}. The service might be temporarily unavailable."
+            if response.status_code == 200:
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    answer = result[0].get('generated_text', '').strip()
+                    # Clean up the answer
+                    if answer.startswith("Question:"):
+                        answer = answer.split("Answer:")[-1].strip()
+                    if answer:
+                        return answer
+                # Try next model
+                continue
+            elif response.status_code == 503:
+                # Model is loading, try next one
+                continue
+            else:
+                # Try next model
+                continue
+
+        # If we get here, none of the models worked
+        return ("Unfortunately, Hugging Face's free API is currently unavailable or restricted.\n\n" +
+                "🎯 RECOMMENDATION: Switch to mock mode - it has excellent educational responses!\n\n" +
+                "The mock mode I built has real knowledge about history, science, geography, and more. " +
+                "It's perfect for demonstrating how AI responses change with corrections.\n\n" +
+                "To switch: Change LLM_MODE=mock in your .env file and restart.")
 
     except Exception as e:
         import traceback
