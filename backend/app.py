@@ -225,25 +225,41 @@ def huggingface_llm(messages):
         if not user_messages:
             return "I'm here to help! What would you like to know?"
 
-        # Use the conversational endpoint which works better with free API
-        # Build conversation history
-        conversation_history = []
-        for msg in messages:
-            if msg['role'] == 'user':
-                conversation_history.append({"role": "user", "content": msg['content']})
-            elif msg['role'] == 'assistant':
-                conversation_history.append({"role": "assistant", "content": msg['content']})
+        # Get the conversation context
+        question = user_messages[-1]
 
-        # Call Hugging Face API using chat completion
-        response = hf_client.chat_completion(
-            messages=conversation_history,
+        # Build a simple prompt with conversation history
+        prompt = ""
+        for msg in messages[-5:]:  # Use last 5 messages for context
+            if msg['role'] == 'user':
+                prompt += f"Human: {msg['content']}\n"
+            elif msg['role'] == 'assistant':
+                prompt += f"Assistant: {msg['content']}\n"
+
+        if not prompt.endswith("Human:"):
+            prompt += f"Assistant:"
+
+        # Use text_generation which is more widely supported
+        response = hf_client.text_generation(
+            prompt,
             model=HF_MODEL,
-            max_tokens=500,
+            max_new_tokens=300,
             temperature=0.7,
+            return_full_text=False,
+            do_sample=True,
         )
 
-        # Extract the response text
-        return response.choices[0].message.content.strip()
+        # Clean up the response
+        answer = response.strip()
+
+        # Remove any "Human:" or "Assistant:" prefixes that might have been generated
+        if answer.startswith("Assistant:"):
+            answer = answer[len("Assistant:"):].strip()
+        if answer.startswith("Human:"):
+            # If model generated a human response, that's wrong, use fallback
+            return huggingface_llm_simple(messages)
+
+        return answer if answer else "I'm not sure how to respond to that."
 
     except Exception as e:
         import traceback
@@ -252,18 +268,13 @@ def huggingface_llm(messages):
         print(f"HuggingFace Error: {error_msg}")
         print(f"Full traceback:\n{full_error}")
 
-        if "rate limit" in error_msg.lower():
-            return "I'm currently experiencing rate limits. Please try again in a moment, or consider adding a Hugging Face API token for unlimited access."
-        elif "not supported" in error_msg.lower() or "conversational" in error_msg.lower():
-            # Fallback to a simpler approach
-            return huggingface_llm_simple(messages)
-
-        # Return detailed error for debugging
-        return f"Error calling Hugging Face: {error_msg}\n\nFull error: {repr(e)}"
+        # Always try the simple fallback on any error
+        print("Trying simple fallback...")
+        return huggingface_llm_simple(messages)
 
 
 def huggingface_llm_simple(messages):
-    """Simplified Hugging Face call using text generation"""
+    """Simplified Hugging Face call using text generation with FLAN-T5"""
     try:
         # Get just the last user message for simplicity
         user_messages = [m['content'] for m in messages if m['role'] == 'user']
@@ -272,22 +283,30 @@ def huggingface_llm_simple(messages):
 
         question = user_messages[-1]
 
-        # Use a simple model that works with text generation
-        simple_model = "google/flan-t5-large"
+        # Use FLAN-T5 which is very reliable for Q&A
+        simple_model = "google/flan-t5-base"  # Using base instead of large for better reliability
+
+        # FLAN-T5 works best with clear instructions
+        prompt = f"Answer this question: {question}"
 
         response = hf_client.text_generation(
-            f"Answer this question concisely: {question}",
+            prompt,
             model=simple_model,
-            max_new_tokens=200,
-            temperature=0.7,
+            max_new_tokens=150,
+            temperature=0.5,
+            return_full_text=False,
         )
 
-        return response.strip()
+        answer = response.strip()
+        return answer if answer else "I don't have enough information to answer that question."
+
     except Exception as e:
         import traceback
         print(f"HuggingFace Simple Error: {str(e)}")
         print(f"Full traceback:\n{traceback.format_exc()}")
-        return f"I apologize, but I'm having trouble connecting to the AI service. Error: {str(e)}\n\nFull error: {repr(e)}\n\nTip: You can switch back to mock mode by changing LLM_MODE=mock in your .env file, or get a free Hugging Face token at https://huggingface.co/settings/tokens"
+
+        # Last resort: return a helpful error message
+        return f"I'm having trouble connecting to the AI service right now.\n\nError: {str(e)}\n\nTip: You can switch back to mock mode (which works great!) by changing LLM_MODE=mock in your .env file."
 
 
 def call_llm(messages, model="gpt-3.5-turbo"):
