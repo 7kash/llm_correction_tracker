@@ -81,10 +81,20 @@ def mock_llm(messages):
             'germany': 'The capital of Germany is Berlin. It became the capital after German reunification in 1990.',
             'spain': 'The capital of Spain is Madrid, located in the center of the country.',
             'italy': 'The capital of Italy is Rome, also known as the "Eternal City".',
+            'usa': 'The capital of the United States is Washington, D.C. It was established as the capital in 1790.',
+            'japan': 'The capital of Japan is Tokyo, the largest metropolitan area in the world.',
         },
         'world war': {
             'initial': 'World War 2 ended in 1945. Germany surrendered in May 1945, and Japan surrendered in September 1945 after the atomic bombs were dropped on Hiroshima and Nagasaki.',
             'correction': 'You\'re absolutely right, thank you for the correction! The European theater of World War 2 ended on May 8, 1945, when Germany officially surrendered. This is celebrated as V-E Day (Victory in Europe Day).',
+        },
+        'mexican war': {
+            'initial': 'The Mexican-American War lasted from 1846 to 1848. It ended with the Treaty of Guadalupe Hidalgo on February 2, 1848, in which Mexico ceded about 55% of its territory to the United States, including present-day California, Nevada, Utah, and parts of several other states.',
+            'detail': 'The Mexican-American War (1846-1848) was a conflict between the United States and Mexico following the 1845 U.S. annexation of Texas. The war ended on February 2, 1848, with the signing of the Treaty of Guadalupe Hidalgo. Under this treaty, Mexico ceded approximately 525,000 square miles of territory to the U.S. in exchange for $15 million. This included what would become California, Nevada, Utah, most of Arizona, and parts of New Mexico, Colorado, and Wyoming.',
+        },
+        'civil war': {
+            'initial': 'The American Civil War lasted from 1861 to 1865. It ended on April 9, 1865, when Confederate General Robert E. Lee surrendered to Union General Ulysses S. Grant at Appomattox Court House in Virginia.',
+            'detail': 'The American Civil War (1861-1865) was fought between the Union (Northern states) and the Confederacy (Southern states) primarily over slavery and states\' rights. The war effectively ended with Lee\'s surrender at Appomattox on April 9, 1865, though some Confederate forces continued fighting for several more weeks. The war resulted in approximately 620,000-750,000 deaths and the abolition of slavery through the 13th Amendment.',
         },
         'planets': {
             'initial': 'There are 8 planets in our solar system: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, and Neptune. Pluto was reclassified as a dwarf planet in 2006.',
@@ -98,6 +108,10 @@ def mock_llm(messages):
             'initial': 'Photosynthesis is the process by which plants convert light energy into chemical energy. Plants use sunlight, water, and carbon dioxide to produce glucose and oxygen.',
             'detail': 'Photosynthesis occurs in the chloroplasts of plant cells. The process has two main stages: the light-dependent reactions (which occur in the thylakoid membranes and produce ATP and NADPH) and the light-independent reactions or Calvin cycle (which occur in the stroma and use ATP and NADPH to convert CO2 into glucose).',
         },
+        'gravity': {
+            'initial': 'Gravity is a fundamental force of nature that attracts objects with mass toward each other. On Earth, gravity gives weight to objects and causes them to fall to the ground when dropped. It also keeps planets in orbit around the Sun.',
+            'detail': 'Gravity is described by Newton\'s law of universal gravitation and Einstein\'s general theory of relativity. The force of gravity depends on the masses of the objects and the distance between them. Earth\'s gravity accelerates objects at approximately 9.8 meters per second squared near the surface.',
+        },
     }
 
     # Determine response based on question content
@@ -109,6 +123,10 @@ def mock_llm(messages):
             if country in last_message:
                 response_text = answer
                 break
+    elif 'mexican war' in last_message or 'mexican-american war' in last_message:
+        response_text = responses['mexican war']['detail'] if is_correction else responses['mexican war']['initial']
+    elif 'civil war' in last_message and 'american' in last_message:
+        response_text = responses['civil war']['detail'] if is_correction else responses['civil war']['initial']
     elif 'world war' in last_message or 'ww2' in last_message or 'wwii' in last_message:
         response_text = responses['world war']['correction'] if is_correction else responses['world war']['initial']
     elif 'planet' in last_message or 'solar system' in last_message:
@@ -117,6 +135,8 @@ def mock_llm(messages):
         response_text = responses['python']['negative'] if ('slow' in last_message or 'performance' in last_message) else responses['python']['initial']
     elif 'photosynthesis' in last_message:
         response_text = responses['photosynthesis']['detail'] if ('detail' in last_message or 'explain more' in last_message) else responses['photosynthesis']['initial']
+    elif 'gravity' in last_message:
+        response_text = responses['gravity']['detail'] if is_correction else responses['gravity']['initial']
 
     # Generate generic responses if no specific match
     if not response_text:
@@ -138,19 +158,47 @@ def mock_llm(messages):
 
 
 def _generate_generic_response(question):
-    """Generate a generic response for unknown questions"""
-    templates = [
-        "That's an interesting question! Based on common knowledge, {topic} is a complex subject that involves multiple factors. Generally speaking, the key aspects include understanding the fundamentals and how they apply in practice.",
-        "Great question! {topic} is something that has been studied extensively. The main points to consider are the historical context, current understanding, and practical applications.",
-        "To answer your question about {topic}, we need to consider several important factors. The primary consideration is how different elements interact and influence the overall outcome.",
-    ]
+    """Generate a more intelligent generic response for unknown questions"""
+    # Better topic extraction
+    question_lower = question.lower()
+    words = question_lower.split()
 
-    # Try to extract a topic from the question
-    words = question.split()
-    meaningful_words = [w for w in words if len(w) > 4 and w not in ['what', 'when', 'where', 'which', 'how', 'why', 'does', 'is', 'are', 'the', 'about']]
-    topic = meaningful_words[0] if meaningful_words else "this topic"
+    # Remove stop words more effectively
+    stop_words = {'what', 'when', 'where', 'which', 'who', 'how', 'why', 'does', 'did', 'do',
+                  'is', 'are', 'was', 'were', 'the', 'a', 'an', 'about', 'year', 'end'}
+    meaningful_words = [w for w in words if w not in stop_words and len(w) > 3]
 
-    return random.choice(templates).format(topic=topic)
+    # Try to extract the main topic
+    topic = ' '.join(meaningful_words[:3]) if meaningful_words else "this topic"
+
+    # Generate contextual responses based on question type
+    if any(word in question_lower for word in ['when', 'year', 'date']):
+        # Historical/date questions
+        templates = [
+            f"While I don't have the exact date for {topic} in my current knowledge base, this appears to be a historical question. Historical events often have significant dates that mark important moments. To get the most accurate information, I'd recommend checking a reliable historical source or encyclopedia.",
+            f"This is a good question about {topic}. For specific dates and historical timelines, it's best to consult authoritative historical resources. Many historical events have complex timelines with multiple significant dates that tell the full story.",
+        ]
+    elif any(word in question_lower for word in ['who', 'person', 'people']):
+        # People/biography questions
+        templates = [
+            f"This question about {topic} involves people or historical figures. Biographical information and the roles people played in historical events are fascinating subjects that often require detailed research from multiple sources to fully understand.",
+            f"Questions about {topic} and the people involved often reveal interesting stories and connections. For detailed biographical information, historical records and scholarly sources provide the most comprehensive answers.",
+        ]
+    elif any(word in question_lower for word in ['how', 'work', 'process']):
+        # Process/explanation questions
+        templates = [
+            f"This is an interesting question about how {topic} works. Understanding processes often involves breaking them down into steps and seeing how different components interact. For technical or scientific topics, consulting specialized resources can provide detailed explanations.",
+            f"The mechanics of {topic} involve various factors and processes. Complex systems often have multiple layers of operation, and understanding each layer helps build a complete picture of how everything works together.",
+        ]
+    else:
+        # General questions
+        templates = [
+            f"That's an interesting question about {topic}. This subject has various aspects worth exploring, including its background, key concepts, and practical implications. For comprehensive information, consulting specialized resources or experts in this field would provide the most accurate details.",
+            f"Good question about {topic}. Many topics like this have rich histories and multiple perspectives to consider. Understanding the context, key facts, and different viewpoints can provide a well-rounded answer.",
+            f"This question touches on {topic}, which is a subject that can be explored from multiple angles. The best approach is often to look at historical context, current understanding, and how it relates to other concepts in the field.",
+        ]
+
+    return random.choice(templates)
 
 
 def call_llm(messages, model="gpt-3.5-turbo"):
