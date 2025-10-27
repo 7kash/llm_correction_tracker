@@ -19,7 +19,8 @@ LLM_MODE = os.getenv('LLM_MODE', 'mock').lower()  # Options: 'mock', 'huggingfac
 if LLM_MODE == 'groq':
     from groq import Groq
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-    GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama3-8b-8192')
+    # Updated to current model - llama3-8b-8192 was decommissioned
+    GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
 
     if GROQ_API_KEY:
         groq_client = Groq(api_key=GROQ_API_KEY)
