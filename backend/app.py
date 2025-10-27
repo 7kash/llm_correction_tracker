@@ -274,8 +274,10 @@ def huggingface_llm(messages):
 
 
 def huggingface_llm_simple(messages):
-    """Simplified Hugging Face call using text generation with FLAN-T5"""
+    """Simplified Hugging Face call using direct API requests"""
     try:
+        import requests
+
         # Get just the last user message for simplicity
         user_messages = [m['content'] for m in messages if m['role'] == 'user']
         if not user_messages:
@@ -283,22 +285,38 @@ def huggingface_llm_simple(messages):
 
         question = user_messages[-1]
 
-        # Use FLAN-T5 which is very reliable for Q&A
-        simple_model = "google/flan-t5-base"  # Using base instead of large for better reliability
+        # Use the Hugging Face Inference API directly
+        # This endpoint works without the InferenceClient provider issues
+        API_URL = "https://api-inference.huggingface.co/models/gpt2"
 
-        # FLAN-T5 works best with clear instructions
-        prompt = f"Answer this question: {question}"
+        headers = {}
+        if HF_TOKEN:
+            headers["Authorization"] = f"Bearer {HF_TOKEN}"
 
-        response = hf_client.text_generation(
-            prompt,
-            model=simple_model,
-            max_new_tokens=150,
-            temperature=0.5,
-            return_full_text=False,
-        )
+        payload = {
+            "inputs": f"Question: {question}\nAnswer:",
+            "parameters": {
+                "max_new_tokens": 100,
+                "temperature": 0.7,
+                "return_full_text": False,
+            }
+        }
 
-        answer = response.strip()
-        return answer if answer else "I don't have enough information to answer that question."
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                answer = result[0].get('generated_text', '').strip()
+                # Clean up the answer
+                if answer.startswith("Question:"):
+                    answer = answer.split("Answer:")[-1].strip()
+                return answer if answer else "I need more information to answer that question."
+            return "I received an unexpected response format."
+        elif response.status_code == 503:
+            return "The AI model is currently loading. Please wait a moment and try again."
+        else:
+            return f"API returned status {response.status_code}. The service might be temporarily unavailable."
 
     except Exception as e:
         import traceback
@@ -306,7 +324,7 @@ def huggingface_llm_simple(messages):
         print(f"Full traceback:\n{traceback.format_exc()}")
 
         # Last resort: return a helpful error message
-        return f"I'm having trouble connecting to the AI service right now.\n\nError: {str(e)}\n\nTip: You can switch back to mock mode (which works great!) by changing LLM_MODE=mock in your .env file."
+        return f"I'm having trouble connecting to the AI service right now.\n\nUnfortunately, Hugging Face's free serverless API has become very restrictive. I recommend switching to mock mode, which has excellent responses!\n\nTo switch: Change LLM_MODE=mock in your .env file."
 
 
 def call_llm(messages, model="gpt-3.5-turbo"):
