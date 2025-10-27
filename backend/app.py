@@ -293,13 +293,13 @@ def huggingface_llm_simple(messages):
             "gpt2",  # Original GPT-2
         ]
 
-        # Try each model until one works
-        for model_name in models_to_try:
-            API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
-
         headers = {}
         if HF_TOKEN:
             headers["Authorization"] = f"Bearer {HF_TOKEN}"
+
+        # Try each model until one works
+        for model_name in models_to_try:
+            API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
 
             payload = {
                 "inputs": f"Question: {question}\nAnswer:",
@@ -310,24 +310,28 @@ def huggingface_llm_simple(messages):
                 }
             }
 
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+            try:
+                response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
 
-            if response.status_code == 200:
-                result = response.json()
-                if isinstance(result, list) and len(result) > 0:
-                    answer = result[0].get('generated_text', '').strip()
-                    # Clean up the answer
-                    if answer.startswith("Question:"):
-                        answer = answer.split("Answer:")[-1].strip()
-                    if answer:
-                        return answer
-                # Try next model
-                continue
-            elif response.status_code == 503:
-                # Model is loading, try next one
-                continue
-            else:
-                # Try next model
+                if response.status_code == 200:
+                    result = response.json()
+                    if isinstance(result, list) and len(result) > 0:
+                        answer = result[0].get('generated_text', '').strip()
+                        # Clean up the answer
+                        if answer.startswith("Question:"):
+                            answer = answer.split("Answer:")[-1].strip()
+                        if answer:
+                            return answer
+                    # Try next model
+                    continue
+                elif response.status_code == 503:
+                    # Model is loading, try next one
+                    continue
+                else:
+                    # Try next model
+                    continue
+            except:
+                # Try next model if this one fails
                 continue
 
         # If we get here, none of the models worked
