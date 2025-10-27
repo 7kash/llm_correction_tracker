@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Learning Visualizer - See How AI Adapts</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        .explanation-box {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-left: 4px solid #667eea;
+        }
+
+        .response-box {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // API configuration
+        const API_URL = 'http://localhost:5000/api';
+
+        function App() {
+            const [sessionId, setSessionId] = useState(null);
+            const [question, setQuestion] = useState('');
+            const [responses, setResponses] = useState([]);
+            const [currentCorrection, setCurrentCorrection] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [analytics, setAnalytics] = useState(null);
+            const chartRefs = {
+                wordCount: useRef(null),
+                sentiment: useRef(null),
+                confidence: useRef(null)
+            };
+            const chartInstances = useRef({});
+
+            const startSession = async () => {
+                if (!question.trim()) return;
+
+                setLoading(true);
+                try {
+                    const response = await fetch(`${API_URL}/start-session`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question })
+                    });
+                    const data = await response.json();
+
+                    setSessionId(data.session_id);
+                    setResponses([{
+                        turn: data.turn,
+                        type: 'initial',
+                        response: data.response,
+                        analysis: data.analysis
+                    }]);
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+                setLoading(false);
+            };
+
+            const submitCorrection = async () => {
+                if (!currentCorrection.trim() || !sessionId) return;
+
+                setLoading(true);
+                try {
+                    const response = await fetch(`${API_URL}/correct`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            session_id: sessionId,
+                            correction: currentCorrection
+                        })
+                    });
+                    const data = await response.json();
+
+                    setResponses(prev => [...prev, {
+                        turn: data.turn,
+                        type: 'correction',
+                        correction: currentCorrection,
+                        response: data.response,
+                        analysis: data.analysis
+                    }]);
+                    setCurrentCorrection('');
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+                setLoading(false);
+            };
+
+            const resetSession = () => {
+                setSessionId(null);
+                setQuestion('');
+                setResponses([]);
+                setCurrentCorrection('');
+                setAnalytics(null);
+
+                // Destroy charts
+                Object.values(chartInstances.current).forEach(chart => {
+                    if (chart) chart.destroy();
+                });
+                chartInstances.current = {};
+            };
+
+            // Update analytics and charts when responses change
+            useEffect(() => {
+                if (responses.length > 0) {
+                    const newAnalytics = {
+                        turns: responses.map((_, i) => `Turn ${i + 1}`),
+                        wordCounts: responses.map(r => r.analysis.word_count),
+                        sentimentScores: responses.map(r => r.analysis.sentiment_score),
+                        confidenceScores: responses.map(r => r.analysis.confidence_score),
+                        avgSentenceLengths: responses.map(r => r.analysis.avg_sentence_length)
+                    };
+                    setAnalytics(newAnalytics);
+
+                    // Update charts after a short delay to ensure DOM is ready
+                    setTimeout(() => updateCharts(newAnalytics), 100);
+                }
+            }, [responses]);
+
+            const updateCharts = (data) => {
+                // Word Count Chart
+                if (chartRefs.wordCount.current) {
+                    const ctx = chartRefs.wordCount.current.getContext('2d');
+
+                    if (chartInstances.current.wordCount) {
+                        chartInstances.current.wordCount.destroy();
+                    }
+
+                    chartInstances.current.wordCount = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: data.turns,
+                            datasets: [{
+                                label: 'Response Length (words)',
+                                data: data.wordCounts,
+                                borderColor: '#667eea',
+                                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                                borderWidth: 3,
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 6,
+                                pointHoverRadius: 8
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: true, position: 'top' },
+                                tooltip: {
+                                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                    padding: 12,
+                                    titleFont: { size: 14 },
+                                    bodyFont: { size: 13 }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Sentiment Chart
+                if (chartRefs.sentiment.current) {
+                    const ctx = chartRefs.sentiment.current.getContext('2d');
+
+                    if (chartInstances.current.sentiment) {
+                        chartInstances.current.sentiment.destroy();
+                    }
+
+                    chartInstances.current.sentiment = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: data.turns,
+                            datasets: [{
+                                label: 'Sentiment Score',
+                                data: data.sentimentScores,
+                                backgroundColor: data.sentimentScores.map(score =>
+                                    score > 0 ? 'rgba(16, 185, 129, 0.6)' : 'rgba(239, 68, 68, 0.6)'
+                                ),
+                                borderColor: data.sentimentScores.map(score =>
+                                    score > 0 ? '#10b981' : '#ef4444'
+                                ),
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: true, position: 'top' },
+                                tooltip: {
+                                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                    padding: 12
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    min: -1,
+                                    max: 1,
+                                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Confidence Chart
+                if (chartRefs.confidence.current) {
+                    const ctx = chartRefs.confidence.current.getContext('2d');
+
+                    if (chartInstances.current.confidence) {
+                        chartInstances.current.confidence.destroy();
+                    }
+
+                    chartInstances.current.confidence = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: data.turns,
+                            datasets: [{
+                                label: 'Confidence Level (%)',
+                                data: data.confidenceScores,
+                                borderColor: '#f59e0b',
+                                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                                borderWidth: 3,
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 6,
+                                pointHoverRadius: 8
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: true, position: 'top' },
+                                tooltip: {
+                                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                    padding: 12
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 100,
+                                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
+                }
+            };
+
+            return (
+                <div className="min-h-screen">
+                    {/* Header */}
+                    <header className="gradient-bg text-white py-8 px-4 shadow-lg">
+                        <div className="max-w-6xl mx-auto">
+                            <h1 className="text-4xl font-bold mb-2">🤖 LLM Learning Visualizer</h1>
+                            <p className="text-lg opacity-90">Watch how AI adapts and improves when you correct it</p>
+                        </div>
+                    </header>
+
+                    <div className="max-w-6xl mx-auto px-4 py-8">
+                        {/* Explanation Box */}
+                        <div className="explanation-box rounded-lg p-6 mb-8 shadow-md">
+                            <h2 className="text-xl font-semibold text-gray-800 mb-3">📚 How This Works</h2>
+                            <p className="text-gray-700 leading-relaxed mb-3">
+                                Large Language Models (LLMs) like ChatGPT are AI systems that learn from conversation.
+                                This tool helps you see <strong>how the AI changes its response</strong> when you tell it something is wrong.
+                            </p>
+                            <p className="text-gray-700 leading-relaxed">
+                                <strong>Try it:</strong> Ask a question, get an answer, then tell the AI what's wrong.
+                                Watch the graphs below to see how the response evolves!
+                            </p>
+                        </div>
+
+                        {/* Input Section */}
+                        {!sessionId ? (
+                            <div className="bg-white rounded-lg shadow-lg p-6 mb-8 card-hover">
+                                <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                                    Step 1: Ask Your Question
+                                </h2>
+                                <div className="explanation-box rounded p-4 mb-4 text-sm">
+                                    <p className="text-gray-700">
+                                        💡 <strong>Tip:</strong> Try questions like "What is the capital of France?" or
+                                        "How many planets are in our solar system?" - questions where you can provide corrections.
+                                    </p>
+                                </div>
+                                <textarea
+                                    className="w-full border-2 border-gray-300 rounded-lg p-4 mb-4 focus:border-purple-500 focus:outline-none"
+                                    rows="4"
+                                    placeholder="Type your question here... (e.g., 'What year did World War 2 end?')"
+                                    value={question}
+                                    onChange={(e) => setQuestion(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), startSession())}
+                                />
+                                <button
+                                    className="gradient-bg text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition disabled:opacity-50"
+                                    onClick={startSession}
+                                    disabled={loading || !question.trim()}
+                                >
+                                    {loading ? '🔄 Getting Response...' : '🚀 Ask the AI'}
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Responses Section */}
+                                <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-2xl font-semibold text-gray-800">
+                                            💬 Conversation History
+                                        </h2>
+                                        <button
+                                            className="text-sm bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-lg transition"
+                                            onClick={resetSession}
+                                        >
+                                            🔄 Start Over
+                                        </button>
+                                    </div>
+
+                                    <div className="mb-4 bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                                        <p className="font-semibold text-blue-900">Your Question:</p>
+                                        <p className="text-blue-800">{question}</p>
+                                    </div>
+
+                                    {responses.map((resp, idx) => (
+                                        <div key={idx} className="response-box mb-6">
+                                            <div className="flex items-start gap-3">
+                                                <div className="flex-shrink-0 w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center text-white font-bold">
+                                                    {idx + 1}
+                                                </div>
+                                                <div className="flex-grow">
+                                                    {resp.correction && (
+                                                        <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 mb-2 rounded">
+                                                            <p className="text-sm font-semibold text-yellow-900">Your Correction:</p>
+                                                            <p className="text-yellow-800">{resp.correction}</p>
+                                                        </div>
+                                                    )}
+                                                    <div className="bg-gray-50 border-l-4 border-purple-500 p-4 rounded">
+                                                        <p className="font-semibold text-gray-900 mb-2">AI Response:</p>
+                                                        <p className="text-gray-800">{resp.response}</p>
+                                                    </div>
+                                                    <div className="mt-2 flex gap-4 text-sm text-gray-600">
+                                                        <span>📝 {resp.analysis.word_count} words</span>
+                                                        <span>😊 Sentiment: {resp.analysis.sentiment_score}</span>
+                                                        <span>🎯 Confidence: {resp.analysis.confidence_score}%</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {/* Correction Input */}
+                                    <div className="mt-6 pt-6 border-t-2 border-gray-200">
+                                        <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                                            Step {responses.length + 1}: Provide a Correction
+                                        </h3>
+                                        <div className="explanation-box rounded p-4 mb-4 text-sm">
+                                            <p className="text-gray-700">
+                                                💡 Tell the AI what's wrong or what needs to be improved.
+                                                The AI will adjust its response, and you'll see the changes in the graphs below!
+                                            </p>
+                                        </div>
+                                        <textarea
+                                            className="w-full border-2 border-gray-300 rounded-lg p-4 mb-3 focus:border-purple-500 focus:outline-none"
+                                            rows="3"
+                                            placeholder="Tell the AI what's wrong or what to change... (e.g., 'That's not quite right, it actually ended in 1945')"
+                                            value={currentCorrection}
+                                            onChange={(e) => setCurrentCorrection(e.target.value)}
+                                            onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submitCorrection())}
+                                        />
+                                        <button
+                                            className="gradient-bg text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition disabled:opacity-50"
+                                            onClick={submitCorrection}
+                                            disabled={loading || !currentCorrection.trim()}
+                                        >
+                                            {loading ? '🔄 Processing...' : '📤 Submit Correction'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Visualizations Section */}
+                                {analytics && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+                                        <h2 className="text-2xl font-semibold text-gray-800 mb-6">
+                                            📊 Visual Analytics
+                                        </h2>
+
+                                        <div className="explanation-box rounded p-4 mb-6 text-sm">
+                                            <p className="text-gray-700 mb-2">
+                                                <strong>📈 What you're seeing:</strong> These graphs show how the AI's response changes with each correction:
+                                            </p>
+                                            <ul className="list-disc list-inside text-gray-700 space-y-1 ml-2">
+                                                <li><strong>Response Length:</strong> How many words the AI uses (longer might mean more detail)</li>
+                                                <li><strong>Sentiment:</strong> The emotional tone (positive or negative)</li>
+                                                <li><strong>Confidence:</strong> How certain the AI seems (based on uncertainty words)</li>
+                                            </ul>
+                                        </div>
+
+                                        {/* Charts Grid */}
+                                        <div className="grid md:grid-cols-2 gap-6">
+                                            <div className="bg-gray-50 rounded-lg p-4">
+                                                <h3 className="font-semibold text-gray-800 mb-3">📏 Response Length Over Time</h3>
+                                                <div style={{ height: '300px' }}>
+                                                    <canvas ref={chartRefs.wordCount}></canvas>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-gray-50 rounded-lg p-4">
+                                                <h3 className="font-semibold text-gray-800 mb-3">😊 Sentiment Analysis</h3>
+                                                <div style={{ height: '300px' }}>
+                                                    <canvas ref={chartRefs.sentiment}></canvas>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-gray-50 rounded-lg p-4 md:col-span-2">
+                                                <h3 className="font-semibold text-gray-800 mb-3">🎯 Confidence Level Over Time</h3>
+                                                <div style={{ height: '300px' }}>
+                                                    <canvas ref={chartRefs.confidence}></canvas>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Key Insights */}
+                                        <div className="mt-6 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6">
+                                            <h3 className="font-semibold text-gray-800 mb-3">🔍 Key Insights</h3>
+                                            <div className="grid md:grid-cols-3 gap-4 text-sm">
+                                                <div className="bg-white rounded p-4">
+                                                    <p className="font-semibold text-purple-700">Total Corrections:</p>
+                                                    <p className="text-2xl font-bold text-purple-900">{responses.length - 1}</p>
+                                                </div>
+                                                <div className="bg-white rounded p-4">
+                                                    <p className="font-semibold text-blue-700">Response Evolution:</p>
+                                                    <p className="text-2xl font-bold text-blue-900">
+                                                        {analytics.wordCounts[analytics.wordCounts.length - 1] - analytics.wordCounts[0] > 0 ? '📈' : '📉'}
+                                                        {Math.abs(analytics.wordCounts[analytics.wordCounts.length - 1] - analytics.wordCounts[0])} words
+                                                    </p>
+                                                </div>
+                                                <div className="bg-white rounded p-4">
+                                                    <p className="font-semibold text-green-700">Latest Confidence:</p>
+                                                    <p className="text-2xl font-bold text-green-900">
+                                                        {analytics.confidenceScores[analytics.confidenceScores.length - 1]}%
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {/* Educational Footer */}
+                        <div className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-lg p-6 shadow-lg">
+                            <h3 className="text-xl font-semibold mb-3">🧠 Understanding LLMs</h3>
+                            <p className="mb-3 leading-relaxed">
+                                LLMs don't truly "learn" from each conversation in real-time. Instead, they use the conversation history
+                                as <strong>context</strong> to generate better responses. It's like giving someone more information to work with!
+                            </p>
+                            <p className="leading-relaxed">
+                                The changes you see in the graphs show how the AI adjusts its <strong>language, tone, and detail level</strong>
+                                based on your feedback within this conversation.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Footer */}
+                    <footer className="text-center py-6 text-gray-600">
+                        <p>Built to help you understand AI • Experiment and learn! 🚀</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
