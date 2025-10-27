@@ -220,34 +220,64 @@ def _generate_generic_response(question):
 def huggingface_llm(messages):
     """Call Hugging Face Inference API"""
     try:
-        # Convert messages to a single prompt for the model
-        prompt = ""
-        for msg in messages:
-            role = msg['role']
-            content = msg['content']
-            if role == 'system':
-                prompt += f"<s>[INST] {content} [/INST]\n"
-            elif role == 'user':
-                prompt += f"[INST] {content} [/INST]\n"
-            elif role == 'assistant':
-                prompt += f"{content}\n"
+        # Extract the user's question from messages
+        user_messages = [m['content'] for m in messages if m['role'] == 'user']
+        if not user_messages:
+            return "I'm here to help! What would you like to know?"
 
-        # Call Hugging Face API
-        response = hf_client.text_generation(
-            prompt,
+        # Use the conversational endpoint which works better with free API
+        # Build conversation history
+        conversation_history = []
+        for msg in messages:
+            if msg['role'] == 'user':
+                conversation_history.append({"role": "user", "content": msg['content']})
+            elif msg['role'] == 'assistant':
+                conversation_history.append({"role": "assistant", "content": msg['content']})
+
+        # Call Hugging Face API using chat completion
+        response = hf_client.chat_completion(
+            messages=conversation_history,
             model=HF_MODEL,
-            max_new_tokens=500,
+            max_tokens=500,
             temperature=0.7,
-            return_full_text=False,
         )
 
-        return response.strip()
+        # Extract the response text
+        return response.choices[0].message.content.strip()
 
     except Exception as e:
         error_msg = str(e)
         if "rate limit" in error_msg.lower():
             return "I'm currently experiencing rate limits. Please try again in a moment, or consider adding a Hugging Face API token for unlimited access."
+        elif "not supported" in error_msg.lower() or "conversational" in error_msg.lower():
+            # Fallback to a simpler approach
+            return huggingface_llm_simple(messages)
         return f"Error calling Hugging Face: {error_msg}"
+
+
+def huggingface_llm_simple(messages):
+    """Simplified Hugging Face call using text generation"""
+    try:
+        # Get just the last user message for simplicity
+        user_messages = [m['content'] for m in messages if m['role'] == 'user']
+        if not user_messages:
+            return "I'm here to help! What would you like to know?"
+
+        question = user_messages[-1]
+
+        # Use a simple model that works with text generation
+        simple_model = "google/flan-t5-large"
+
+        response = hf_client.text_generation(
+            f"Answer this question concisely: {question}",
+            model=simple_model,
+            max_new_tokens=200,
+            temperature=0.7,
+        )
+
+        return response.strip()
+    except Exception as e:
+        return f"I apologize, but I'm having trouble connecting to the AI service. Error: {str(e)}\n\nTip: You can switch back to mock mode by changing LLM_MODE=mock in your .env file, or get a free Hugging Face token at https://huggingface.co/settings/tokens"
 
 
 def call_llm(messages, model="gpt-3.5-turbo"):
