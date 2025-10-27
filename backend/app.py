@@ -13,10 +13,22 @@ app = Flask(__name__)
 CORS(app)
 
 # Determine which LLM mode to use
-LLM_MODE = os.getenv('LLM_MODE', 'mock').lower()  # Options: 'mock', 'huggingface', 'openai'
+LLM_MODE = os.getenv('LLM_MODE', 'mock').lower()  # Options: 'mock', 'huggingface', 'openai', 'groq'
 
 # Configure based on mode
-if LLM_MODE == 'huggingface':
+if LLM_MODE == 'groq':
+    from groq import Groq
+    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+    GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama3-8b-8192')
+
+    if GROQ_API_KEY:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        print(f"✅ Using Groq model: {GROQ_MODEL}")
+    else:
+        print("❌ Error: GROQ_API_KEY not found in .env file")
+        print("   Get a FREE API key at: https://console.groq.com")
+
+elif LLM_MODE == 'huggingface':
     from huggingface_hub import InferenceClient
     HF_TOKEN = os.getenv('HUGGING_FACE_TOKEN')
     # Use a model that works well with the free API
@@ -350,10 +362,30 @@ def huggingface_llm_simple(messages):
         return f"I'm having trouble connecting to the AI service right now.\n\nUnfortunately, Hugging Face's free serverless API has become very restrictive. I recommend switching to mock mode, which has excellent responses!\n\nTo switch: Change LLM_MODE=mock in your .env file."
 
 
+def groq_llm(messages):
+    """Call Groq API - Fast and FREE!"""
+    try:
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=500,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        import traceback
+        print(f"Groq Error: {str(e)}")
+        print(f"Full traceback:\n{traceback.format_exc()}")
+        return f"Error calling Groq: {str(e)}\n\nMake sure your GROQ_API_KEY is valid. Get a free key at https://console.groq.com"
+
+
 def call_llm(messages, model="gpt-3.5-turbo"):
     """Call LLM based on configured mode"""
     if LLM_MODE == 'mock':
         return mock_llm(messages)
+
+    elif LLM_MODE == 'groq':
+        return groq_llm(messages)
 
     elif LLM_MODE == 'huggingface':
         return huggingface_llm(messages)
@@ -485,16 +517,23 @@ def health():
     """Health check endpoint"""
     messages = {
         'mock': 'Running in MOCK mode - simulated AI responses, no API needed!',
+        'groq': f'Running with Groq (FREE & FAST!): {GROQ_MODEL}' if LLM_MODE == 'groq' else '',
         'huggingface': f'Running with Hugging Face model: {HF_MODEL}' if LLM_MODE == 'huggingface' else '',
         'openai': 'Running with OpenAI API'
     }
+
+    model_info = None
+    if LLM_MODE == 'groq':
+        model_info = GROQ_MODEL
+    elif LLM_MODE == 'huggingface':
+        model_info = HF_MODEL
 
     return jsonify({
         'status': 'healthy',
         'sessions': len(sessions),
         'mode': LLM_MODE,
         'message': messages.get(LLM_MODE, f'Running in {LLM_MODE} mode'),
-        'model': HF_MODEL if LLM_MODE == 'huggingface' else None
+        'model': model_info
     })
 
 
