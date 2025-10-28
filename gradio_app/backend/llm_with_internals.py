@@ -78,7 +78,7 @@ class LLMWithInternals:
         history: Optional[List[Tuple[str, str]]] = None
     ) -> str:
         """
-        Format question + history as chat prompt.
+        Format question + history as chat prompt using TinyLlama's chat template.
 
         Parameters
         ----------
@@ -87,18 +87,24 @@ class LLMWithInternals:
         history : list of (correction, response) tuples
             Previous turns
         """
-        # TinyLlama chat format
+        # Build messages in proper format
         messages = []
 
         if history:
             for correction, response in history:
-                messages.append(f"User: {correction}")
-                messages.append(f"Assistant: {response}")
+                messages.append({"role": "user", "content": correction})
+                messages.append({"role": "assistant", "content": response})
 
-        messages.append(f"User: {question}")
-        messages.append("Assistant:")
+        messages.append({"role": "user", "content": question})
 
-        return "\n".join(messages)
+        # Use tokenizer's chat template
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        return prompt
 
     def generate_with_internals(
         self,
@@ -128,13 +134,22 @@ class LLMWithInternals:
         input_length = inputs.input_ids.shape[1]
 
         # Step 1: Generate response (without internals to avoid dimension issues)
+        # Add stop tokens to prevent generating fake conversation
+        stop_token_ids = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|im_end|>"),  # TinyLlama chat end token
+        ]
+        # Remove None values
+        stop_token_ids = [tid for tid in stop_token_ids if tid is not None]
+
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 do_sample=do_sample,
-                pad_token_id=self.tokenizer.eos_token_id
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=stop_token_ids
             )
 
         # Extract response text

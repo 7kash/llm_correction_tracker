@@ -62,7 +62,7 @@ def get_vocab_list():
 
 def generate_response(
     question: str,
-    max_tokens: int = 100,
+    max_tokens: int = 50,
     temperature: float = 0.7
 ) -> Tuple[str, dict]:
     """
