@@ -1,18 +1,43 @@
-# 🧠 LLM Learning Visualizer
+# 🧠 LLM Inference Tracker
 
-**Interactive educational tool** that visualizes how Large Language Models adapt when corrected. Perfect for teachers, students, and anyone curious about AI!
+⚠️ **NEW VERSION AVAILABLE**: [Gradio App](gradio_app/) with **real model internals** (attention, layer trajectories, logit lens)
 
-![Status](https://img.shields.io/badge/Status-Enhanced-brightgreen) ![Python](https://img.shields.io/badge/Python-3.8+-blue) ![React](https://img.shields.io/badge/React-18-blue) ![AI](https://img.shields.io/badge/AI-Semantic_Similarity-purple)
+**Track how Large Language Models change their responses when corrected** — with visualizations of internal mechanisms!
+
+![Status](https://img.shields.io/badge/Status-Migrating-orange) ![Python](https://img.shields.io/badge/Python-3.8+-blue) ![Gradio](https://img.shields.io/badge/Gradio-4.19-blue) ![AI](https://img.shields.io/badge/AI-Model_Internals-purple)
 
 📚 **[Full Documentation](CLAUDE.md)** | 🏗️ **[Architecture](architecture.md)** | 📋 **[Roadmap](plan.md)** | ✅ **[Tasks](todo.md)**
 
-## ✨ What's New
+## 🚀 Quick Start (New Gradio Version)
 
-🔥 **Semantic Similarity Heatmaps** - See meaning changes, not just words
-📊 **Vector Movement in 2D** - Watch AI's thought process evolve
-📝 **Sentence-Level Analysis** - Track which ideas changed
-🎓 **Interactive Explainers** - Learn attention & temperature
-📚 **Educational Content** - Theory + formulas in plain English
+```bash
+cd gradio_app
+pip install -r requirements.txt
+python app.py
+# Open http://localhost:7860
+```
+
+See [gradio_app/README.md](gradio_app/README.md) for details.
+
+---
+
+## ⚠️ Legacy Version Below
+
+The documentation below describes the **old Flask+React version** with semantic similarity analysis. This version is being replaced by the **Gradio app** (see above) which uses **real model internals** instead of text similarity approximations.
+
+**Use the Gradio app** for:
+- Real attention weights from the model
+- Layer-by-layer hidden state tracking
+- Logit lens (what model "thinks" at each layer)
+
+**Old version features** (semantic similarity):
+- Cosine similarity heatmaps
+- Vector movement in 2D (UMAP/PCA)
+- Sentence-level comparison
+
+---
+
+## ✨ What Was New (Legacy)
 
 ## 🎯 What It Does
 

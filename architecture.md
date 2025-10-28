@@ -1,19 +1,30 @@
 # Architecture
 
-## System Overview
+⚠️ **MIGRATION IN PROGRESS**: Moving from Flask+React to Gradio+HuggingFace Spaces
+
+## System Overview (New)
 
 ```
-┌─────────────┐      HTTP      ┌──────────────┐
-│   Browser   │ ◄────────────► │  Flask API   │
-│  (React 18) │   REST/JSON    │  (Port 5001) │
-└─────────────┘                └──────┬───────┘
-                                      │
-                         ┌────────────┼────────────┐
-                         ▼            ▼            ▼
-                    ┌────────┐  ┌─────────┐  ┌─────────┐
-                    │  Mock  │  │  Groq   │  │ OpenAI  │
-                    │  LLM   │  │   API   │  │   API   │
-                    └────────┘  └─────────┘  └─────────┘
+┌─────────────┐      HTTP      ┌──────────────────────────┐
+│   Browser   │ ◄────────────► │   Gradio Interface       │
+│             │   WebSocket    │   (HF Spaces)            │
+└─────────────┘                └──────────┬───────────────┘
+                                          │
+                                          ▼
+                                ┌──────────────────────┐
+                                │  TinyLlama (Local)   │
+                                │  with Transformers   │
+                                │  - Attention weights │
+                                │  - Hidden states     │
+                                │  - Logits per layer  │
+                                └──────────────────────┘
+                                          │
+                         ┌────────────────┼────────────────┐
+                         ▼                ▼                ▼
+                    ┌──────────┐  ┌──────────────┐  ┌──────────────┐
+                    │Attention │  │  Layer       │  │  Logit Lens  │
+                    │ Rollout  │  │Trajectories  │  │  Analyzer    │
+                    └──────────┘  └──────────────┘  └──────────────┘
 ```
 
 ## Core Components
