@@ -27,10 +27,9 @@ from visualizations.logit_lens import (
     get_top_k_per_layer,
     analyze_layer_shift
 )
-from visualizations.storytelling import (
-    get_token_by_token_attention_story,
-    analyze_logit_lens_story,
-    create_enhanced_turn_summary
+from visualizations.answer_flow import (
+    create_answer_generation_flow,
+    analyze_word_importance
 )
 
 
@@ -100,25 +99,23 @@ def generate_response(
 
 def create_turn_summary(internals: dict, previous_internals: Optional[dict] = None) -> str:
     """
-    Create enhanced summary with actionable insights.
+    Create answer generation flow visualization.
 
     Returns Markdown-formatted text.
     """
-    # Use enhanced storytelling version
-    return create_enhanced_turn_summary(internals, previous_internals)
+    vocab = get_vocab_list()
+    return create_answer_generation_flow(internals, vocab)
 
 
-def visualize_attention(turn_index: int) -> Tuple[plt.Figure, str]:
-    """Create attention rollout visualization + story for a specific turn."""
+def visualize_attention(turn_index: int) -> plt.Figure:
+    """Create attention rollout visualization for a specific turn."""
     if turn_index >= len(SESSION_HISTORY):
-        return None, "_No data for this turn_"
+        return None
 
     _, _, internals = SESSION_HISTORY[turn_index]
 
     # Get tokens and attention
-    input_tokens = internals["input_tokens"]
-    output_tokens = internals["tokens"]
-    all_tokens = input_tokens + output_tokens
+    all_tokens = internals["input_tokens"] + internals["tokens"]
     attentions = internals["attentions"]
 
     # Create visualization
@@ -130,15 +127,7 @@ def visualize_attention(turn_index: int) -> Tuple[plt.Figure, str]:
         residual_alpha=0.6
     )
 
-    # Create story
-    story = get_token_by_token_attention_story(
-        attentions,
-        input_tokens,
-        output_tokens,
-        top_k=3
-    )
-
-    return fig, story
+    return fig
 
 
 def visualize_trajectories(turn_index: int, token_to_track: Optional[str] = None) -> plt.Figure:
@@ -168,19 +157,15 @@ def visualize_trajectories(turn_index: int, token_to_track: Optional[str] = None
     return fig
 
 
-def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> Tuple[plt.Figure, str]:
-    """Create logit lens visualization + story."""
+def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> plt.Figure:
+    """Create logit lens visualization."""
     if turn_index >= len(SESSION_HISTORY):
-        return None, "_No data for this turn_"
+        return None
 
     _, _, internals = SESSION_HISTORY[turn_index]
 
     logits = internals["logits_per_layer"]
     vocab = get_vocab_list()
-
-    # Create story (same for both modes)
-    analysis = analyze_logit_lens_story(logits, vocab, top_k=3)
-    story = analysis["story"]
 
     if mode == "heatmap":
         tokens_per_layer, probs_per_layer = get_top_k_per_layer(
@@ -199,7 +184,7 @@ def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> Tuple[plt.Fi
             logits, vocab, tokens_to_track, temperature=1.0
         )
 
-    return fig, story
+    return fig
 
 
 def reset_session():
@@ -279,8 +264,7 @@ def main_interface():
                 minimum=0, maximum=10, step=1, value=0,
                 label="Select Turn to Visualize"
             )
-            attention_plot = gr.Plot(label="Attention Rollout Visualization")
-            attention_story = gr.Markdown("_Click 'Show Attention' to generate story_")
+            attention_plot = gr.Plot(label="Attention Rollout")
             visualize_attn_btn = gr.Button("🔍 Show Attention")
 
         with gr.Tab("📈 Layer Trajectories"):
@@ -311,8 +295,7 @@ def main_interface():
                 value="heatmap",
                 label="Visualization Mode"
             )
-            logit_plot = gr.Plot(label="Logit Lens Visualization")
-            logit_story = gr.Markdown("_Click 'Show Logit Lens' to generate story_")
+            logit_plot = gr.Plot(label="Logit Lens")
             visualize_logit_btn = gr.Button("🔍 Show Logit Lens")
 
         # Event handlers
@@ -343,7 +326,7 @@ def main_interface():
         visualize_attn_btn.click(
             fn=visualize_attention,
             inputs=[turn_selector_attn],
-            outputs=[attention_plot, attention_story]
+            outputs=[attention_plot]
         )
 
         visualize_traj_btn.click(
@@ -355,7 +338,7 @@ def main_interface():
         visualize_logit_btn.click(
             fn=visualize_logit_lens,
             inputs=[turn_selector_logit, logit_mode],
-            outputs=[logit_plot, logit_story]
+            outputs=[logit_plot]
         )
 
     return demo
