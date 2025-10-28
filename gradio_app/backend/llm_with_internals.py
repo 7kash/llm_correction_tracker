@@ -64,7 +64,8 @@ class LLMWithInternals:
             output_attentions=True,
             output_hidden_states=True,
             torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            low_cpu_mem_usage=True
+            low_cpu_mem_usage=True,
+            attn_implementation="eager"  # Use eager attention to support output_attentions
         ).to(device)
 
         self.model.eval()  # Inference mode
@@ -126,35 +127,42 @@ class LLMWithInternals:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
 
-        # Generate with internals
+        # Step 1: Generate response (without internals to avoid dimension issues)
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 do_sample=do_sample,
-                output_attentions=True,
-                output_hidden_states=True,
-                return_dict_in_generate=True,
                 pad_token_id=self.tokenizer.eos_token_id
             )
 
         # Extract response text
-        response_ids = outputs.sequences[0][input_length:]
+        full_sequence = outputs[0]
+        response_ids = full_sequence[input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
 
         # Extract tokens
-        all_tokens = self.tokenizer.convert_ids_to_tokens(outputs.sequences[0])
+        all_tokens = self.tokenizer.convert_ids_to_tokens(full_sequence)
         input_tokens = all_tokens[:input_length]
         output_tokens = all_tokens[input_length:]
 
-        # Process attention weights
-        # outputs.attentions is tuple of tuples: (step, layer, heads, seq, seq)
-        attentions = self._process_attentions(outputs.attentions, input_length)
+        # Step 2: Forward pass on FULL sequence to extract internals
+        # This gives us consistent shapes for attention/hidden states
+        full_inputs = {"input_ids": full_sequence.unsqueeze(0)}
+
+        with torch.no_grad():
+            forward_outputs = self.model(
+                **full_inputs,
+                output_attentions=True,
+                output_hidden_states=True
+            )
+
+        # Process attention weights (now consistent shape!)
+        attentions = self._process_attentions_from_forward(forward_outputs.attentions)
 
         # Process hidden states
-        # outputs.hidden_states is tuple of tuples: (step, layer, batch, seq, hidden)
-        hidden_states = self._process_hidden_states(outputs.hidden_states, input_length)
+        hidden_states = self._process_hidden_states_from_forward(forward_outputs.hidden_states)
 
         # Extract logits per layer (for logit lens)
         logits_per_layer = self._extract_logit_lens(hidden_states)
@@ -163,55 +171,49 @@ class LLMWithInternals:
             "response": response_text.strip(),
             "tokens": output_tokens,
             "input_tokens": input_tokens,
-            "attentions": attentions,  # (layers, heads, seq, seq)
-            "hidden_states": hidden_states,  # (layers, seq, hidden_dim)
-            "logits_per_layer": logits_per_layer,  # (layers, vocab_size) for last position
+            "attentions": attentions,  # (layers, seq, seq)
+            "hidden_states": hidden_states,  # (layers, hidden_dim)
+            "logits_per_layer": logits_per_layer,  # (layers, vocab_size)
             "num_layers": self.model.config.num_hidden_layers
         }
 
-    def _process_attentions(
+    def _process_attentions_from_forward(
         self,
-        attentions_tuple: Tuple,
-        input_length: int
+        attentions_tuple: Tuple
     ) -> np.ndarray:
         """
-        Process attention weights from generation output.
+        Process attention weights from a forward pass.
 
-        Returns mean-over-heads attention for the last generated token.
+        Returns mean-over-heads attention for all layers.
         Shape: (num_layers, seq_len, seq_len)
         """
-        # attentions_tuple is (generation_steps,)
-        # Each step has (num_layers,) tensors of shape (batch, heads, new_seq, full_seq)
+        # attentions_tuple is (num_layers,) tuple
+        # Each element has shape (batch=1, heads, seq, seq)
 
-        # Use last generation step for visualization
-        last_step_attentions = attentions_tuple[-1]
-
-        # Stack layers and mean over heads
         layer_attentions = []
-        for layer_attn in last_step_attentions:
+        for layer_attn in attentions_tuple:
             # layer_attn: (batch=1, heads, seq, seq)
             mean_attn = layer_attn[0].mean(dim=0).cpu().numpy()  # (seq, seq)
             layer_attentions.append(mean_attn)
 
         return np.stack(layer_attentions, axis=0)  # (layers, seq, seq)
 
-    def _process_hidden_states(
+    def _process_hidden_states_from_forward(
         self,
-        hidden_states_tuple: Tuple,
-        input_length: int
+        hidden_states_tuple: Tuple
     ) -> np.ndarray:
         """
-        Process hidden states from generation output.
+        Process hidden states from a forward pass.
 
-        Returns hidden states for the last generated token across all layers.
+        Returns hidden states for the last token across all layers.
         Shape: (num_layers, hidden_dim)
         """
-        # Use last generation step
-        last_step_hidden = hidden_states_tuple[-1]
+        # hidden_states_tuple is (num_layers + 1,) tuple (includes embedding layer)
+        # Each element has shape (batch=1, seq, hidden_dim)
+        # Skip the first (embedding layer), use layers 1 onwards
 
-        # Extract hidden state for last token across all layers
         layer_hidden = []
-        for layer_h in last_step_hidden:
+        for layer_h in hidden_states_tuple[1:]:  # Skip embedding layer
             # layer_h: (batch=1, seq, hidden_dim)
             last_token_hidden = layer_h[0, -1, :].cpu().numpy()  # (hidden_dim,)
             layer_hidden.append(last_token_hidden)
