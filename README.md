@@ -81,7 +81,7 @@ Perfect for teachers, students, or anyone curious about how AI learns and adapts
 4. **Run the application**
    ```bash
    # Start the backend (from the backend directory)
-   python app.py
+  PORT=5001 python app.py  
    ```
 
 5. **Open the frontend**
