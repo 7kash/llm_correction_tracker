@@ -27,6 +27,11 @@ from visualizations.logit_lens import (
     get_top_k_per_layer,
     analyze_layer_shift
 )
+from visualizations.storytelling import (
+    get_token_by_token_attention_story,
+    analyze_logit_lens_story,
+    create_enhanced_turn_summary
+)
 
 
 # Global model instance (loaded once)
@@ -95,65 +100,25 @@ def generate_response(
 
 def create_turn_summary(internals: dict, previous_internals: Optional[dict] = None) -> str:
     """
-    Create plain-English summary of what changed.
+    Create enhanced summary with actionable insights.
 
     Returns Markdown-formatted text.
     """
-    summary_parts = []
-
-    # Basic info
-    num_tokens = len(internals["tokens"])
-    num_layers = internals["num_layers"]
-
-    summary_parts.append(f"### Turn {len(SESSION_HISTORY) - 1}")
-    summary_parts.append(f"- **Generated tokens**: {num_tokens}")
-    summary_parts.append(f"- **Model layers**: {num_layers}")
-
-    if previous_internals:
-        summary_parts.append("\n### Changes from previous turn:")
-
-        # Attention shift (compare top contributors)
-        prev_attn = previous_internals["attentions"]
-        curr_attn = internals["attentions"]
-
-        prev_tokens = previous_internals["input_tokens"] + previous_internals["tokens"]
-        curr_tokens = internals["input_tokens"] + internals["tokens"]
-
-        prev_top = get_top_contributors(prev_attn, prev_tokens, target_pos=-1, k=3)
-        curr_top = get_top_contributors(curr_attn, curr_tokens, target_pos=-1, k=3)
-
-        summary_parts.append(f"\n**Attention shift**:")
-        summary_parts.append(f"- Before: Top contributors were {[t for t, _ in prev_top]}")
-        summary_parts.append(f"- After: Top contributors are {[t for t, _ in curr_top]}")
-
-        # Logit lens shift
-        vocab = get_vocab_list()
-        prev_analysis = analyze_layer_shift(previous_internals["logits_per_layer"], vocab)
-        curr_analysis = analyze_layer_shift(internals["logits_per_layer"], vocab)
-
-        prev_final_token = prev_analysis["top_tokens_per_layer"][-1]
-        curr_final_token = curr_analysis["top_tokens_per_layer"][-1]
-
-        if prev_final_token != curr_final_token:
-            summary_parts.append(f"\n**Prediction change**:")
-            summary_parts.append(f"- Before: Model leaned toward '{prev_final_token}'")
-            summary_parts.append(f"- After: Model now prefers '{curr_final_token}'")
-            summary_parts.append(f"- Shift occurred at layers: {curr_analysis['shift_layers']}")
-    else:
-        summary_parts.append("\n(First turn - no comparison available)")
-
-    return "\n".join(summary_parts)
+    # Use enhanced storytelling version
+    return create_enhanced_turn_summary(internals, previous_internals)
 
 
-def visualize_attention(turn_index: int) -> plt.Figure:
-    """Create attention rollout visualization for a specific turn."""
+def visualize_attention(turn_index: int) -> Tuple[plt.Figure, str]:
+    """Create attention rollout visualization + story for a specific turn."""
     if turn_index >= len(SESSION_HISTORY):
-        return None
+        return None, "_No data for this turn_"
 
     _, _, internals = SESSION_HISTORY[turn_index]
 
     # Get tokens and attention
-    all_tokens = internals["input_tokens"] + internals["tokens"]
+    input_tokens = internals["input_tokens"]
+    output_tokens = internals["tokens"]
+    all_tokens = input_tokens + output_tokens
     attentions = internals["attentions"]
 
     # Create visualization
@@ -165,7 +130,15 @@ def visualize_attention(turn_index: int) -> plt.Figure:
         residual_alpha=0.6
     )
 
-    return fig
+    # Create story
+    story = get_token_by_token_attention_story(
+        attentions,
+        input_tokens,
+        output_tokens,
+        top_k=3
+    )
+
+    return fig, story
 
 
 def visualize_trajectories(turn_index: int, token_to_track: Optional[str] = None) -> plt.Figure:
@@ -195,15 +168,19 @@ def visualize_trajectories(turn_index: int, token_to_track: Optional[str] = None
     return fig
 
 
-def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> plt.Figure:
-    """Create logit lens visualization."""
+def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> Tuple[plt.Figure, str]:
+    """Create logit lens visualization + story."""
     if turn_index >= len(SESSION_HISTORY):
-        return None
+        return None, "_No data for this turn_"
 
     _, _, internals = SESSION_HISTORY[turn_index]
 
     logits = internals["logits_per_layer"]
     vocab = get_vocab_list()
+
+    # Create story (same for both modes)
+    analysis = analyze_logit_lens_story(logits, vocab, top_k=3)
+    story = analysis["story"]
 
     if mode == "heatmap":
         tokens_per_layer, probs_per_layer = get_top_k_per_layer(
@@ -222,7 +199,7 @@ def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> plt.Figure:
             logits, vocab, tokens_to_track, temperature=1.0
         )
 
-    return fig
+    return fig, story
 
 
 def reset_session():
@@ -302,7 +279,8 @@ def main_interface():
                 minimum=0, maximum=10, step=1, value=0,
                 label="Select Turn to Visualize"
             )
-            attention_plot = gr.Plot(label="Attention Rollout")
+            attention_plot = gr.Plot(label="Attention Rollout Visualization")
+            attention_story = gr.Markdown("_Click 'Show Attention' to generate story_")
             visualize_attn_btn = gr.Button("🔍 Show Attention")
 
         with gr.Tab("📈 Layer Trajectories"):
@@ -333,7 +311,8 @@ def main_interface():
                 value="heatmap",
                 label="Visualization Mode"
             )
-            logit_plot = gr.Plot(label="Logit Lens")
+            logit_plot = gr.Plot(label="Logit Lens Visualization")
+            logit_story = gr.Markdown("_Click 'Show Logit Lens' to generate story_")
             visualize_logit_btn = gr.Button("🔍 Show Logit Lens")
 
         # Event handlers
@@ -364,7 +343,7 @@ def main_interface():
         visualize_attn_btn.click(
             fn=visualize_attention,
             inputs=[turn_selector_attn],
-            outputs=[attention_plot]
+            outputs=[attention_plot, attention_story]
         )
 
         visualize_traj_btn.click(
@@ -376,7 +355,7 @@ def main_interface():
         visualize_logit_btn.click(
             fn=visualize_logit_lens,
             inputs=[turn_selector_logit, logit_mode],
-            outputs=[logit_plot]
+            outputs=[logit_plot, logit_story]
         )
 
     return demo
