@@ -44,6 +44,22 @@ def load_model():
     return MODEL
 
 
+def get_vocab_list():
+    """
+    Get vocabulary as a list indexed by token ID.
+
+    Returns
+    -------
+    list[str] where vocab[token_id] = token_string
+    """
+    vocab_dict = MODEL.tokenizer.get_vocab()
+    vocab_size = len(vocab_dict)
+    vocab = [""] * vocab_size
+    for token_str, token_id in vocab_dict.items():
+        vocab[token_id] = token_str
+    return vocab
+
+
 def generate_response(
     question: str,
     max_tokens: int = 100,
@@ -111,8 +127,9 @@ def create_turn_summary(internals: dict, previous_internals: Optional[dict] = No
         summary_parts.append(f"- After: Top contributors are {[t for t, _ in curr_top]}")
 
         # Logit lens shift
-        prev_analysis = analyze_layer_shift(previous_internals["logits_per_layer"], MODEL.tokenizer.get_vocab())
-        curr_analysis = analyze_layer_shift(internals["logits_per_layer"], MODEL.tokenizer.get_vocab())
+        vocab = get_vocab_list()
+        prev_analysis = analyze_layer_shift(previous_internals["logits_per_layer"], vocab)
+        curr_analysis = analyze_layer_shift(internals["logits_per_layer"], vocab)
 
         prev_final_token = prev_analysis["top_tokens_per_layer"][-1]
         curr_final_token = curr_analysis["top_tokens_per_layer"][-1]
@@ -186,7 +203,7 @@ def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> plt.Figure:
     _, _, internals = SESSION_HISTORY[turn_index]
 
     logits = internals["logits_per_layer"]
-    vocab = list(MODEL.tokenizer.get_vocab().keys())
+    vocab = get_vocab_list()
 
     if mode == "heatmap":
         tokens_per_layer, probs_per_layer = get_top_k_per_layer(
