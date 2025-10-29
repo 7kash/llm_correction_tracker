@@ -320,6 +320,34 @@ def main_interface():
             logit_plot = gr.Plot(label="Logit Lens")
             visualize_logit_btn = gr.Button("🔍 Show Logit Lens")
 
+        with gr.Tab("🔬 Layer-by-Layer (Logit Lens)"):
+            gr.Markdown("""
+            **Shows**: How the model's prediction forms through layers.
+
+            **NEW!** Enter a question and get a one-word answer. See what each layer predicts!
+
+            **How to read**:
+            - "Actual answer": The word the model generated, with its probability at each layer
+            - "Top alternatives": Other predictions the model considered
+            - Watch how the correct answer gains confidence through layers!
+            """)
+
+            layer_question_input = gr.Textbox(
+                label="Question (one-word answer expected)",
+                placeholder="Example: What is the capital of Australia?",
+                lines=2
+            )
+
+            layer_generate_btn = gr.Button("🧠 Generate & Show Layers", variant="primary")
+
+            layer_answer_output = gr.Textbox(
+                label="Generated Answer",
+                lines=1,
+                interactive=False
+            )
+
+            layer_viz_output = gr.Markdown("_Ask a question to see layer-by-layer predictions!_")
+
         # Event handlers
         def on_generate(question):
             if not question.strip():
@@ -361,6 +389,19 @@ def main_interface():
             fn=visualize_logit_lens,
             inputs=[turn_selector_logit, logit_mode],
             outputs=[logit_plot]
+        )
+
+        def on_layer_generate(question):
+            if not question.strip():
+                return "Please enter a question!", "_Ask a question to see predictions!_"
+
+            answer, visualization = generate_one_word_answer(question)
+            return answer, visualization
+
+        layer_generate_btn.click(
+            fn=on_layer_generate,
+            inputs=[layer_question_input],
+            outputs=[layer_answer_output, layer_viz_output]
         )
 
     return demo
