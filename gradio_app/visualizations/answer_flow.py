@@ -27,47 +27,59 @@ def clean_token(token: str) -> tuple:
     if not token or len(token) == 0:
         return None
 
-    # Remove any chat template markers from the token first
-    # This handles cases like "Australia<|assistant|>" as one token
-    chat_markers = ['<|user|>', '<|assistant|>', '<|im_start|>', '<|im_end|>', '<|system|>']
+    # Check for SentencePiece word boundary marker FIRST
+    has_leading_space = token.startswith('▁')
+
+    # Remove underscore prefix for further processing
+    token = token.replace('▁', '')
+
+    # AGGRESSIVE FILTERING: Remove common chat template words
+    # TinyLlama uses tokens like "user", "assistant", "system" without brackets
+    chat_keywords = ['user', 'assistant', 'system', 'im', 'start', 'end']
+    token_lower = token.lower()
+    if token_lower in chat_keywords:
+        return None
+
+    # Filter out tokens that are PART of chat keywords (like "assist" from "assistant")
+    for keyword in chat_keywords:
+        if keyword in token_lower and len(token_lower) <= len(keyword) + 2:
+            return None
+
+    # Remove any remaining chat template markers
+    chat_markers = ['<|user|>', '<|assistant|>', '<|im_start|>', '<|im_end|>', '<|system|>', '|>']
     for marker in chat_markers:
         token = token.replace(marker, '')
 
-    # After removing markers, check if anything is left
-    if not token:
-        return None
-
-    # Direct string matches for chat template (in case token IS just the marker)
-    if token in chat_markers:
-        return None
-
-    # Pattern-based filtering - match anywhere in string, not just start
+    # Pattern-based filtering
     noise_patterns = [
         r'<[^>]*>',         # Anything in angle brackets
-        r'^▁+$',            # Just underscores
         r'^\s+$',           # Just whitespace
         r'^[<>|]+$',        # Just brackets and pipes
+        r'^[▁]+$',          # Just underscores (redundant but safe)
     ]
 
     for pattern in noise_patterns:
-        if re.search(pattern, token):  # Changed from match to search
+        if re.search(pattern, token):
             return None
 
-    # Check for SentencePiece word boundary marker
-    has_leading_space = token.startswith('▁')
-
-    # Clean the token
-    token = token.replace('▁', '')
     token = token.strip()
 
     # Filter garbage
     if len(token) == 0 or len(token) > 50:
         return None
 
-    # Only keep tokens that look like actual words/punctuation
-    if not re.search(r'[a-zA-Z0-9]', token):
-        # No alphanumeric characters - probably garbage unless it's punctuation
-        if token not in ['.', ',', '!', '?', ':', ';', '-', "'", '"']:
+    # AGGRESSIVE: Only keep tokens with at least 2 letters OR known punctuation
+    # This filters out random subword tokens like "ikz", "glob", "omer"
+    if not re.search(r'[a-zA-Z]{2,}', token):
+        # Less than 2 letters - only keep if it's known punctuation or single meaningful letter
+        if token not in ['.', ',', '!', '?', ':', ';', '-', "'", '"', 'a', 'I', 'A']:
+            return None
+
+    # Filter out tokens that look like random fragments
+    # Common patterns: starts with multiple consonants, no vowels, etc.
+    if len(token) >= 2:
+        # Must have at least one vowel
+        if not re.search(r'[aeiouAEIOU]', token):
             return None
 
     return (token, has_leading_space)
