@@ -347,26 +347,27 @@ def create_answer_generation_flow(
         parts.append(f"_Layers {start}-{end}_\n")
         parts.append(f"{desc}\n")
 
-        # Show top predictions at this stage - but only if they're meaningful
+        # Show top predictions at this stage - show alternatives even if weak
         if stage["top_predictions"]:
-            # Check if we have any predictions above 0.05% threshold
-            strong_predictions = [p for p in stage["top_predictions"] if p["probability"] >= 0.0005]
-
-            if strong_predictions:
-                parts.append("**Leading predictions at this stage**:\n")
-                for pred in strong_predictions:
-                    token = pred["token"]
-                    prob = pred["probability"]
+            parts.append("**Leading predictions at this stage**:\n")
+            shown_any = False
+            for pred in stage["top_predictions"]:
+                token = pred["token"]
+                prob = pred["probability"]
+                # Show anything above 0.01% (much more permissive)
+                if prob >= 0.0001:
                     if prob >= 0.01:
                         parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
                     elif prob >= 0.001:
                         parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
                     else:
                         parts.append(f"- `{token}` ({prob*100:.3f}%)\n")
-            else:
-                parts.append("**Leading predictions at this stage**: _(no strong predictions, all below 0.05% threshold)_\n")
+                    shown_any = True
+
+            if not shown_any:
+                parts.append("- _(all predictions below 0.01% - model very uncertain at this stage)_\n")
         else:
-            parts.append("**Leading predictions at this stage**: _(no clear predictions)_\n")
+            parts.append("**Leading predictions at this stage**: _(no predictions found)_\n")
 
         parts.append("")
 
