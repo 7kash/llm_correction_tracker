@@ -76,10 +76,17 @@ def clean_token(token: str) -> tuple:
             return None
 
     # Filter out tokens that look like random fragments
-    # Common patterns: starts with multiple consonants, no vowels, etc.
     if len(token) >= 2:
         # Must have at least one vowel
         if not re.search(r'[aeiouAEIOU]', token):
+            return None
+
+        # Must be ASCII only (filters "ßen" and other non-English)
+        if not token.isascii():
+            return None
+
+        # Filter tokens with 3+ consonants in a row at start (like "strk")
+        if re.match(r'^[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{3,}', token):
             return None
 
     return (token, has_leading_space)
@@ -374,18 +381,24 @@ def create_answer_generation_flow(
         parts.append(f"_Layers {start}-{end}_\n")
         parts.append(f"{desc}\n")
 
-        # Show top predictions at this stage - always show all available
+        # Show top predictions at this stage - but only if they're meaningful
         if stage["top_predictions"]:
-            parts.append("**Leading predictions at this stage**:\n")
-            for pred in stage["top_predictions"]:
-                token = pred["token"]
-                prob = pred["probability"]
-                if prob >= 0.01:
-                    parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
-                elif prob >= 0.001:
-                    parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
-                else:
-                    parts.append(f"- `{token}` ({prob*100:.3f}%)\n")
+            # Check if we have any predictions above 0.05% threshold
+            strong_predictions = [p for p in stage["top_predictions"] if p["probability"] >= 0.0005]
+
+            if strong_predictions:
+                parts.append("**Leading predictions at this stage**:\n")
+                for pred in strong_predictions:
+                    token = pred["token"]
+                    prob = pred["probability"]
+                    if prob >= 0.01:
+                        parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
+                    elif prob >= 0.001:
+                        parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
+                    else:
+                        parts.append(f"- `{token}` ({prob*100:.3f}%)\n")
+            else:
+                parts.append("**Leading predictions at this stage**: _(no strong predictions, all below 0.05% threshold)_\n")
         else:
             parts.append("**Leading predictions at this stage**: _(no clear predictions)_\n")
 
