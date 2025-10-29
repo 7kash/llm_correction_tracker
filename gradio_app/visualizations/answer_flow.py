@@ -275,7 +275,7 @@ def create_answer_generation_flow(
     Parameters
     ----------
     internals : dict
-        Contains attentions, logits_per_layer, input_tokens, tokens
+        Contains attentions, logits_per_layer, input_tokens, tokens, token_alternatives
     vocab : list[str]
         Vocabulary
 
@@ -301,9 +301,61 @@ def create_answer_generation_flow(
     parts.append(f"**Answer**: **{answer}**\n")
     parts.append("---\n")
 
+    # Show token-by-token generation with alternatives
+    if "token_alternatives" in internals and internals["token_alternatives"]:
+        parts.append("## 🔄 Generation Process\n")
+        parts.append("_The model generated the answer token-by-token, considering alternatives at each step:_\n")
+
+        token_alts = internals["token_alternatives"]
+
+        for i, step in enumerate(token_alts[:10]):  # Show first 10 tokens max
+            chosen = step["token"]
+            chosen_prob = step["probability"]
+            alternatives = step["alternatives"]
+
+            # Clean the chosen token for display
+            result = clean_token(chosen)
+            if result:
+                display_token, _ = result
+            else:
+                display_token = chosen.replace("▁", " ").strip()
+
+            if not display_token:
+                continue
+
+            parts.append(f"### Token {i+1}: `{display_token}`\n")
+
+            # Show top alternatives (excluding the chosen one)
+            clean_alts = []
+            for alt in alternatives[:5]:
+                if alt["token"] != chosen:
+                    alt_result = clean_token(alt["token"])
+                    if alt_result:
+                        alt_display, _ = alt_result
+                        if alt_display and alt["probability"] >= 0.01:  # Only show >1%
+                            clean_alts.append({
+                                "token": alt_display,
+                                "prob": alt["probability"]
+                            })
+
+            if clean_alts:
+                parts.append(f"**Chose** `{display_token}` ({chosen_prob*100:.1f}%)\n")
+                parts.append("**Alternatives considered**:\n")
+                for alt in clean_alts[:3]:  # Show top 3
+                    parts.append(f"- `{alt['token']}` ({alt['prob']*100:.1f}%)\n")
+            else:
+                parts.append(f"**Chose** `{display_token}` ({chosen_prob*100:.1f}% confident)\n")
+
+            parts.append("")
+
+        if len(token_alts) > 10:
+            parts.append(f"_... and {len(token_alts) - 10} more tokens_\n")
+
+        parts.append("---\n")
+
     # Word importance
     parts.append("## 📊 Which Words Mattered Most?\n")
-    parts.append("_The model used attention to focus on these input words when generating the answer:_\n")
+    parts.append("_The model used attention to focus on these input words:_\n")
 
     word_scores = analyze_word_importance(
         internals["attentions"],
@@ -323,14 +375,13 @@ def create_answer_generation_flow(
 
                 parts.append(f"**{word}** {bar} {percentage}%\n")
 
-        parts.append("💡 _These words received the most attention from the model during generation_\n")
+        parts.append("💡 _These words received the most attention during generation_\n")
 
     parts.append("---\n")
 
-    # Show the answer prominently
-    parts.append("## ✅ Generated Answer\n")
+    # Show the final answer
+    parts.append("## ✅ Final Answer\n")
     parts.append(f"**{answer}**\n")
-    parts.append("_The model successfully generated this response by attending to the key words in your question._\n")
 
     return "\n".join(parts)
 
@@ -382,9 +433,39 @@ if __name__ == "__main__":
     attentions = np.random.rand(num_layers, seq_len, seq_len)
     attentions = attentions / attentions.sum(axis=2, keepdims=True)
 
+    # Mock token alternatives (simulating token-by-token generation)
+    token_alternatives = [
+        {
+            "token": "▁Can",
+            "probability": 0.45,
+            "alternatives": [
+                {"token": "▁Can", "probability": 0.45},
+                {"token": "▁Sydney", "probability": 0.12},
+                {"token": "▁Melbourne", "probability": 0.08},
+                {"token": "▁The", "probability": 0.05},
+            ]
+        },
+        {
+            "token": "ber",
+            "probability": 0.89,
+            "alternatives": [
+                {"token": "ber", "probability": 0.89},
+                {"token": "berra", "probability": 0.03},
+            ]
+        },
+        {
+            "token": "ra",
+            "probability": 0.92,
+            "alternatives": [
+                {"token": "ra", "probability": 0.92},
+            ]
+        }
+    ]
+
     internals = {
         "input_tokens": input_tokens,
         "tokens": output_tokens,
+        "token_alternatives": token_alternatives,
         "attentions": attentions,
         "logits_per_layer": logits
     }

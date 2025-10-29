@@ -117,11 +117,14 @@ class LLMWithInternals:
         """
         Generate response with full internal state extraction.
 
+        Now includes token-by-token generation to capture alternatives.
+
         Returns
         -------
         dict with keys:
             - response: str
             - tokens: list[str]
+            - token_alternatives: list of dicts [{token, probability, alternatives: [{token, prob}, ...]}]
             - attentions: list of np.ndarray (layers x heads x seq x seq)
             - hidden_states: list of np.ndarray (layers x seq x hidden_dim)
             - logits_per_layer: list of np.ndarray (layers x vocab_size)
@@ -133,27 +136,72 @@ class LLMWithInternals:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
 
-        # Step 1: Generate response (without internals to avoid dimension issues)
-        # Add stop tokens to prevent generating fake conversation
+        # Stop tokens
         stop_token_ids = [
             self.tokenizer.eos_token_id,
-            self.tokenizer.convert_tokens_to_ids("<|im_end|>"),  # TinyLlama chat end token
+            self.tokenizer.convert_tokens_to_ids("<|im_end|>"),
         ]
-        # Remove None values
         stop_token_ids = [tid for tid in stop_token_ids if tid is not None]
 
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=do_sample,
-                pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=stop_token_ids
-            )
+        # Generate token-by-token to capture alternatives
+        token_alternatives = []
+        current_ids = inputs.input_ids
+
+        for _ in range(max_new_tokens):
+            with torch.no_grad():
+                outputs = self.model(
+                    current_ids,
+                    output_attentions=False,
+                    output_hidden_states=False
+                )
+
+            # Get logits for next token
+            next_token_logits = outputs.logits[0, -1, :]  # (vocab_size,)
+
+            # Apply temperature
+            next_token_logits = next_token_logits / temperature
+
+            # Get probabilities
+            probs = torch.softmax(next_token_logits, dim=-1)
+
+            # Get top 5 alternatives
+            top_probs, top_ids = torch.topk(probs, k=5)
+
+            # Sample or take argmax
+            if do_sample:
+                next_token_id = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token_id = torch.argmax(probs, keepdim=True)
+
+            # Store alternatives
+            alternatives = []
+            for i in range(len(top_ids)):
+                token_str = self.tokenizer.decode([top_ids[i].item()])
+                alternatives.append({
+                    "token": token_str,
+                    "token_id": top_ids[i].item(),
+                    "probability": float(top_probs[i].item())
+                })
+
+            # Store chosen token with alternatives
+            chosen_token = self.tokenizer.decode([next_token_id.item()])
+            chosen_prob = float(probs[next_token_id.item()].item())
+
+            token_alternatives.append({
+                "token": chosen_token,
+                "probability": chosen_prob,
+                "alternatives": alternatives
+            })
+
+            # Check for stop tokens
+            if next_token_id.item() in stop_token_ids:
+                break
+
+            # Add to sequence
+            current_ids = torch.cat([current_ids, next_token_id.unsqueeze(0)], dim=1)
 
         # Extract response text
-        full_sequence = outputs[0]
+        full_sequence = current_ids[0]
         response_ids = full_sequence[input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
 
@@ -162,8 +210,7 @@ class LLMWithInternals:
         input_tokens = all_tokens[:input_length]
         output_tokens = all_tokens[input_length:]
 
-        # Step 2: Forward pass on FULL sequence to extract internals
-        # This gives us consistent shapes for attention/hidden states
+        # Forward pass on FULL sequence to extract internals
         full_inputs = {"input_ids": full_sequence.unsqueeze(0)}
 
         with torch.no_grad():
@@ -173,7 +220,7 @@ class LLMWithInternals:
                 output_hidden_states=True
             )
 
-        # Process attention weights (now consistent shape!)
+        # Process attention weights
         attentions = self._process_attentions_from_forward(forward_outputs.attentions)
 
         # Process hidden states
@@ -185,10 +232,11 @@ class LLMWithInternals:
         return {
             "response": response_text.strip(),
             "tokens": output_tokens,
+            "token_alternatives": token_alternatives,  # NEW: alternatives at each step
             "input_tokens": input_tokens,
-            "attentions": attentions,  # (layers, seq, seq)
-            "hidden_states": hidden_states,  # (layers, hidden_dim)
-            "logits_per_layer": logits_per_layer,  # (layers, vocab_size)
+            "attentions": attentions,
+            "hidden_states": hidden_states,
+            "logits_per_layer": logits_per_layer,
             "num_layers": self.model.config.num_hidden_layers
         }
 
