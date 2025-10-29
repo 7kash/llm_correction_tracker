@@ -439,40 +439,46 @@ def create_layer_by_layer_visualization(
         layer_data = layer_predictions[layer_idx]
         predictions = layer_data["predictions"]
 
-        # Clean and filter predictions
-        clean_preds = []
-        for pred in predictions[:5]:
+        # Separate actual answer from alternatives
+        actual_answer_pred = None
+        alternatives = []
+
+        for pred in predictions:
             token = pred["token"]
             prob = pred["probability"]
+            is_actual = pred.get("is_actual_answer", False)
 
+            # Clean token for display
             result = clean_token(token)
             if result:
                 display_token, _ = result
-                if display_token and len(display_token) > 0:
-                    clean_preds.append({
-                        "token": display_token,
-                        "prob": prob
-                    })
+            else:
+                display_token = token.strip()
 
-        if not clean_preds:
-            continue
+            if not display_token:
+                display_token = token.strip()  # Use raw if cleaning failed
+
+            pred_data = {"token": display_token, "prob": prob}
+
+            if is_actual:
+                actual_answer_pred = pred_data
+            else:
+                alternatives.append(pred_data)
 
         # Show layer number
         parts.append(f"### Layer {layer_idx}\n")
 
-        # Show top 3 predictions
-        for i, pred in enumerate(clean_preds[:3]):
-            token = pred["token"]
-            prob = pred["prob"]
+        # ALWAYS show actual answer first
+        if actual_answer_pred:
+            token = actual_answer_pred["token"]
+            prob = actual_answer_pred["prob"]
+            parts.append(f"**Actual answer** `{token}`: {prob*100:.1f}%\n")
 
-            if i == 0:
-                # Top prediction - show prominently
-                parts.append(f"**Top prediction**: `{token}` ({prob*100:.1f}%)\n")
-            else:
-                # Alternatives
-                if i == 1:
-                    parts.append("**Alternatives**:\n")
-                parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
+        # Then show top 3 alternatives
+        if alternatives:
+            parts.append("**Top alternatives**:\n")
+            for alt in alternatives[:3]:
+                parts.append(f"- `{alt['token']}` ({alt['prob']*100:.1f}%)\n")
 
         parts.append("\n")
 

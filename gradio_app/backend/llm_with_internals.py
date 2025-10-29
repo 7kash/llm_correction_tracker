@@ -289,8 +289,12 @@ class LLMWithInternals:
                 output_hidden_states=True
             )
 
-        # Step 3: Extract predictions at each layer AT THE ANSWER POSITION
+        # Step 3: Extract predictions at each layer
+        # Show probability of the ACTUAL answer at each layer
         hidden_states_tuple = outputs.hidden_states
+
+        # Get the actual generated tokens
+        actual_token_ids = response_ids.tolist()
 
         layer_predictions = []
 
@@ -303,38 +307,47 @@ class LLMWithInternals:
             logits = self.model.lm_head(hidden_at_answer)
             probs = torch.softmax(logits, dim=-1)
 
-            # Get top 5
+            # Get probability of the ACTUAL answer (decoded full text)
+            actual_answer_prob = 0.0
+            if len(actual_token_ids) > 0:
+                # For single/multi-token answers, get probability of first token
+                # (This is what the model predicted at this position)
+                actual_answer_prob = float(probs[actual_token_ids[0]].item())
+
+            # Get top 5 alternatives
             top_probs, top_ids = torch.topk(probs, k=5)
 
             predictions = []
-            for i in range(min(3, len(top_ids))):  # Only top 3 to show
+
+            # ALWAYS show the actual answer first (even if not in top 5)
+            predictions.append({
+                "token": response_text,  # The actual complete answer
+                "token_id": actual_token_ids[0] if actual_token_ids else -1,
+                "probability": actual_answer_prob,
+                "is_actual_answer": True
+            })
+
+            # Then show top 3 alternatives (excluding actual if it's already there)
+            for i in range(min(5, len(top_ids))):
                 token_id = top_ids[i].item()
+
+                # Skip if this is the actual answer token (already shown)
+                if actual_token_ids and token_id == actual_token_ids[0]:
+                    continue
+
                 prob = float(top_probs[i].item())
-
-                # Generate 2 more tokens from this prediction to form complete word
-                current_seq = torch.cat([
-                    inputs.input_ids[0],
-                    torch.tensor([token_id], device=self.device)
-                ]).unsqueeze(0)
-
-                # Generate next 2 tokens
-                with torch.no_grad():
-                    continued = self.model.generate(
-                        current_seq,
-                        max_new_tokens=2,
-                        do_sample=False,
-                        pad_token_id=self.tokenizer.eos_token_id
-                    )
-
-                # Decode the complete word (first token + 2 more)
-                word_tokens = continued[0, input_length:]
-                complete_word = self.tokenizer.decode(word_tokens, skip_special_tokens=True)
+                token_str = self.tokenizer.decode([token_id])
 
                 predictions.append({
-                    "token": complete_word.strip(),  # Complete word, not just first token
+                    "token": token_str.strip(),
                     "token_id": token_id,
-                    "probability": prob
+                    "probability": prob,
+                    "is_actual_answer": False
                 })
+
+                # Keep only top 3 alternatives (plus actual answer)
+                if len([p for p in predictions if not p.get("is_actual_answer", False)]) >= 3:
+                    break
 
             layer_predictions.append({
                 "layer": layer_idx,
