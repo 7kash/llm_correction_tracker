@@ -27,11 +27,21 @@ def clean_token(token: str) -> tuple:
     if not token or len(token) == 0:
         return None
 
-    # Direct string matches for chat template
-    if token in ['<|user|>', '<|assistant|>', '<|im_start|>', '<|im_end|>', '<|system|>']:
+    # Remove any chat template markers from the token first
+    # This handles cases like "Australia<|assistant|>" as one token
+    chat_markers = ['<|user|>', '<|assistant|>', '<|im_start|>', '<|im_end|>', '<|system|>']
+    for marker in chat_markers:
+        token = token.replace(marker, '')
+
+    # After removing markers, check if anything is left
+    if not token:
         return None
 
-    # Pattern-based filtering
+    # Direct string matches for chat template (in case token IS just the marker)
+    if token in chat_markers:
+        return None
+
+    # Pattern-based filtering - match anywhere in string, not just start
     noise_patterns = [
         r'<[^>]*>',         # Anything in angle brackets
         r'^▁+$',            # Just underscores
@@ -40,7 +50,7 @@ def clean_token(token: str) -> tuple:
     ]
 
     for pattern in noise_patterns:
-        if re.match(pattern, token):
+        if re.search(pattern, token):  # Changed from match to search
             return None
 
     # Check for SentencePiece word boundary marker
@@ -291,9 +301,9 @@ def create_answer_generation_flow(
                 bar = "█" * bar_length
                 percentage = int((score / max_score) * 100)
 
-                parts.append(f"**{word}** {bar} {percentage}%")
+                parts.append(f"**{word}** {bar} {percentage}%\n")
 
-        parts.append("\n💡 _The model paid most attention to these words when generating the answer_\n")
+        parts.append("💡 _The model paid most attention to these words when generating the answer_\n")
 
     parts.append("---\n")
 
@@ -321,12 +331,18 @@ def create_answer_generation_flow(
 
         # Show top predictions at this stage
         if stage["top_predictions"]:
-            parts.append("**Leading predictions at this stage**:")
+            parts.append("**Leading predictions at this stage**:\n")
+            shown_any = False
             for pred in stage["top_predictions"][:3]:
                 token = pred["token"]
                 prob = pred["probability"]
                 if prob > 0.01:  # Only show if > 1%
-                    parts.append(f"- `{token}` ({prob*100:.0f}%)")
+                    parts.append(f"- `{token}` ({prob*100:.0f}%)\n")
+                    shown_any = True
+            if not shown_any:
+                parts.append("- _(predictions below 1% threshold)_\n")
+        else:
+            parts.append("**Leading predictions at this stage**: _(no clear predictions)_\n")
 
         parts.append("")
 
