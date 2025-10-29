@@ -238,19 +238,34 @@ def analyze_layer_stages(
     final_probs = np.exp(final_logits - final_logits.max())
     final_probs /= final_probs.sum()
 
-    # Try top 10 predictions to find a clean token
-    top_indices = np.argsort(final_probs)[-10:][::-1]
+    # Try top 20 predictions to find clean tokens
+    top_indices = np.argsort(final_probs)[-20:][::-1]
     final_answer = None
     final_confidence = 0.0
+    alternatives = []
 
     for idx in top_indices:
         final_token = vocab[idx] if idx < len(vocab) else None
         if final_token:
             result = clean_token(final_token)
             if result:
-                final_answer = result[0]
-                final_confidence = float(final_probs[idx])
-                break
+                cleaned_token = result[0]
+                prob = float(final_probs[idx])
+
+                if final_answer is None:
+                    # This is the top prediction
+                    final_answer = cleaned_token
+                    final_confidence = prob
+                else:
+                    # This is an alternative
+                    alternatives.append({
+                        "token": cleaned_token,
+                        "probability": prob
+                    })
+
+                # Stop after finding 4 clean tokens (1 final + 3 alternatives)
+                if len(alternatives) >= 3:
+                    break
 
     # Fallback if nothing was clean
     if final_answer is None:
@@ -260,7 +275,8 @@ def analyze_layer_stages(
     return {
         "stages": stages,
         "final_answer": final_answer,
-        "confidence": final_confidence
+        "confidence": final_confidence,
+        "alternatives": alternatives
     }
 
 
@@ -346,21 +362,18 @@ def create_answer_generation_flow(
         parts.append(f"_Layers {start}-{end}_\n")
         parts.append(f"{desc}\n")
 
-        # Show top predictions at this stage
+        # Show top predictions at this stage - always show all available
         if stage["top_predictions"]:
             parts.append("**Leading predictions at this stage**:\n")
-            shown_any = False
-            for pred in stage["top_predictions"][:3]:
+            for pred in stage["top_predictions"]:
                 token = pred["token"]
                 prob = pred["probability"]
-                if prob > 0.001:  # Only show if > 0.1%
-                    if prob >= 0.01:
-                        parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
-                    else:
-                        parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
-                    shown_any = True
-            if not shown_any:
-                parts.append("- _(predictions below 0.1% threshold)_\n")
+                if prob >= 0.01:
+                    parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
+                elif prob >= 0.001:
+                    parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
+                else:
+                    parts.append(f"- `{token}` ({prob*100:.3f}%)\n")
         else:
             parts.append("**Leading predictions at this stage**: _(no clear predictions)_\n")
 
@@ -387,6 +400,19 @@ def create_answer_generation_flow(
         parts.append("❓ _Low confidence - uncertain_")
     else:
         parts.append("⚠️ _Very low confidence - highly uncertain (typical for large vocabularies)_")
+
+    # Show alternatives that were considered
+    if 'alternatives' in stage_analysis and stage_analysis['alternatives']:
+        parts.append("\n")
+        parts.append("**Alternatives considered**:\n")
+        for alt in stage_analysis['alternatives']:
+            prob = alt['probability']
+            if prob >= 0.01:
+                parts.append(f"- `{alt['token']}` ({prob*100:.1f}%)\n")
+            elif prob >= 0.001:
+                parts.append(f"- `{alt['token']}` ({prob*100:.2f}%)\n")
+            else:
+                parts.append(f"- `{alt['token']}` ({prob*100:.3f}%)\n")
 
     return "\n".join(parts)
 
@@ -430,8 +456,8 @@ if __name__ == "__main__":
         # Late layers: Canberra dominates (high confidence)
         else:
             logits[l, 100] += 10.0  # Canberra (very strong, ~10-20% after softmax)
-            logits[l, 101] += 2.0   # Sydney (much weaker)
-            logits[l, 102] += 1.0   # Melbourne (weak)
+            logits[l, 101] += 2.5   # Sydney (much weaker but still visible)
+            logits[l, 102] += 1.8   # Melbourne (weak but still visible)
 
     # Mock attention
     seq_len = len(input_tokens) + len(output_tokens)
