@@ -282,10 +282,11 @@ class LLMWithInternals:
         response_ids = generated_ids[0, input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
 
-        # Step 2: Forward pass on FULL sequence (prompt + generated answer)
+        # Step 2: Forward pass on PROMPT ONLY (no cheating!)
+        # This shows what each layer predicts WITHOUT seeing the answer
         with torch.no_grad():
             outputs = self.model(
-                input_ids=generated_ids,
+                **inputs,  # Just the prompt, NOT generated_ids!
                 output_hidden_states=True
             )
 
@@ -299,12 +300,13 @@ class LLMWithInternals:
         layer_predictions = []
 
         for layer_idx, layer_hidden in enumerate(hidden_states_tuple):
-            # Get hidden state at the position just BEFORE answer starts
-            answer_position = input_length - 1
-            hidden_at_answer = layer_hidden[0, answer_position, :]
+            # Get hidden state at LAST position of prompt
+            # This is where model predicts the answer (without seeing it)
+            last_position = -1
+            hidden_at_prediction = layer_hidden[0, last_position, :]
 
             # Apply LM head
-            logits = self.model.lm_head(hidden_at_answer)
+            logits = self.model.lm_head(hidden_at_prediction)
             probs = torch.softmax(logits, dim=-1)
 
             # Get probability of the ACTUAL answer (decoded full text)
