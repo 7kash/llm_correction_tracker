@@ -262,42 +262,7 @@ class LLMWithInternals:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
 
-        # Forward pass to get hidden states at each layer
-        with torch.no_grad():
-            outputs = self.model(**inputs, output_hidden_states=True)
-
-        # Extract predictions at each layer using logit lens
-        hidden_states_tuple = outputs.hidden_states  # (num_layers + 1) tuple
-
-        layer_predictions = []
-
-        for layer_idx, layer_hidden in enumerate(hidden_states_tuple):
-            # Get hidden state at last position (where we predict answer)
-            last_hidden = layer_hidden[0, -1, :]  # (hidden_dim,)
-
-            # Apply LM head
-            logits = self.model.lm_head(last_hidden)  # (vocab_size,)
-            probs = torch.softmax(logits, dim=-1)
-
-            # Get top 5
-            top_probs, top_ids = torch.topk(probs, k=5)
-
-            predictions = []
-            for i in range(len(top_ids)):
-                token_id = top_ids[i].item()
-                token_str = self.tokenizer.decode([token_id])
-                predictions.append({
-                    "token": token_str,
-                    "token_id": token_id,
-                    "probability": float(top_probs[i].item())
-                })
-
-            layer_predictions.append({
-                "layer": layer_idx,
-                "predictions": predictions
-            })
-
-        # Generate actual answer
+        # Step 1: Generate actual answer FIRST
         stop_token_ids = [
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids("<|im_end|>"),
@@ -316,6 +281,65 @@ class LLMWithInternals:
 
         response_ids = generated_ids[0, input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
+
+        # Step 2: Forward pass on FULL sequence (prompt + generated answer)
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=generated_ids,
+                output_hidden_states=True
+            )
+
+        # Step 3: Extract predictions at each layer AT THE ANSWER POSITION
+        hidden_states_tuple = outputs.hidden_states
+
+        layer_predictions = []
+
+        for layer_idx, layer_hidden in enumerate(hidden_states_tuple):
+            # Get hidden state at the position just BEFORE answer starts
+            answer_position = input_length - 1
+            hidden_at_answer = layer_hidden[0, answer_position, :]
+
+            # Apply LM head
+            logits = self.model.lm_head(hidden_at_answer)
+            probs = torch.softmax(logits, dim=-1)
+
+            # Get top 5
+            top_probs, top_ids = torch.topk(probs, k=5)
+
+            predictions = []
+            for i in range(min(3, len(top_ids))):  # Only top 3 to show
+                token_id = top_ids[i].item()
+                prob = float(top_probs[i].item())
+
+                # Generate 2 more tokens from this prediction to form complete word
+                current_seq = torch.cat([
+                    inputs.input_ids[0],
+                    torch.tensor([token_id], device=self.device)
+                ]).unsqueeze(0)
+
+                # Generate next 2 tokens
+                with torch.no_grad():
+                    continued = self.model.generate(
+                        current_seq,
+                        max_new_tokens=2,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.eos_token_id
+                    )
+
+                # Decode the complete word (first token + 2 more)
+                word_tokens = continued[0, input_length:]
+                complete_word = self.tokenizer.decode(word_tokens, skip_special_tokens=True)
+
+                predictions.append({
+                    "token": complete_word.strip(),  # Complete word, not just first token
+                    "token_id": token_id,
+                    "probability": prob
+                })
+
+            layer_predictions.append({
+                "layer": layer_idx,
+                "predictions": predictions
+            })
 
         input_tokens = self.tokenizer.convert_ids_to_tokens(inputs.input_ids[0])
 
