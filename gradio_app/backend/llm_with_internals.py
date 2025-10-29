@@ -240,6 +240,92 @@ class LLMWithInternals:
             "num_layers": self.model.config.num_hidden_layers
         }
 
+    def generate_one_word_with_layers(
+        self,
+        question: str,
+        max_new_tokens: int = 3
+    ) -> Dict:
+        """
+        Generate one-word answer and show what each layer predicts (logit lens).
+
+        Returns
+        -------
+        dict with keys:
+            - response: str
+            - layer_predictions: list of {layer, predictions: [{token, prob}, ...]}
+            - input_tokens: list[str]
+        """
+        # Format prompt for one-word answer
+        prompt = f"Answer in one word only.\n\nQuestion: {question}\nAnswer:"
+
+        # Tokenize
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        input_length = inputs.input_ids.shape[1]
+
+        # Forward pass to get hidden states at each layer
+        with torch.no_grad():
+            outputs = self.model(**inputs, output_hidden_states=True)
+
+        # Extract predictions at each layer using logit lens
+        hidden_states_tuple = outputs.hidden_states  # (num_layers + 1) tuple
+
+        layer_predictions = []
+
+        for layer_idx, layer_hidden in enumerate(hidden_states_tuple):
+            # Get hidden state at last position (where we predict answer)
+            last_hidden = layer_hidden[0, -1, :]  # (hidden_dim,)
+
+            # Apply LM head
+            logits = self.model.lm_head(last_hidden)  # (vocab_size,)
+            probs = torch.softmax(logits, dim=-1)
+
+            # Get top 5
+            top_probs, top_ids = torch.topk(probs, k=5)
+
+            predictions = []
+            for i in range(len(top_ids)):
+                token_id = top_ids[i].item()
+                token_str = self.tokenizer.decode([token_id])
+                predictions.append({
+                    "token": token_str,
+                    "token_id": token_id,
+                    "probability": float(top_probs[i].item())
+                })
+
+            layer_predictions.append({
+                "layer": layer_idx,
+                "predictions": predictions
+            })
+
+        # Generate actual answer
+        stop_token_ids = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|im_end|>"),
+        ]
+        stop_token_ids = [tid for tid in stop_token_ids if tid is not None]
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=0.1,
+                do_sample=False,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=stop_token_ids
+            )
+
+        response_ids = generated_ids[0, input_length:]
+        response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
+
+        input_tokens = self.tokenizer.convert_ids_to_tokens(inputs.input_ids[0])
+
+        return {
+            "response": response_text.strip(),
+            "layer_predictions": layer_predictions,
+            "input_tokens": input_tokens,
+            "num_layers": len(layer_predictions)
+        }
+
     def _process_attentions_from_forward(
         self,
         attentions_tuple: Tuple

@@ -29,6 +29,7 @@ from visualizations.logit_lens import (
 )
 from visualizations.answer_flow import (
     create_answer_generation_flow,
+    create_layer_by_layer_visualization,
     analyze_word_importance
 )
 
@@ -95,6 +96,27 @@ def generate_response(
     SESSION_HISTORY.append((question, result["response"], result))
 
     return result["response"], result
+
+
+def generate_one_word_answer(question: str) -> Tuple[str, str]:
+    """
+    Generate one-word answer and show layer-by-layer predictions (logit lens).
+
+    Returns
+    -------
+    answer : str
+    visualization : str (markdown)
+    """
+    model = load_model()
+
+    # Generate with layer-by-layer tracking
+    result = model.generate_one_word_with_layers(question, max_new_tokens=3)
+
+    # Create visualization
+    vocab = get_vocab_list()
+    visualization = create_layer_by_layer_visualization(result, vocab)
+
+    return result["response"], visualization
 
 
 def create_turn_summary(internals: dict, previous_internals: Optional[dict] = None) -> str:

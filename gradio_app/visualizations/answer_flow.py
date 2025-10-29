@@ -386,6 +386,104 @@ def create_answer_generation_flow(
     return "\n".join(parts)
 
 
+def create_layer_by_layer_visualization(
+    internals: dict,
+    vocab: List[str]
+) -> str:
+    """
+    Create visualization showing how answer forms through layers (logit lens).
+
+    Parameters
+    ----------
+    internals : dict
+        Contains layer_predictions, response, input_tokens
+    vocab : list[str]
+        Vocabulary (not used but kept for compatibility)
+
+    Returns
+    -------
+    markdown : str
+        Layer-by-layer visualization
+    """
+    parts = []
+
+    # Header
+    parts.append("# 🔬 How the Answer Forms Through Layers\n")
+
+    # Get input question
+    input_words = get_clean_words(internals["input_tokens"])
+    question = " ".join([word for word, _ in input_words])
+
+    parts.append(f"**Question**: _{question}_\n")
+    parts.append("**Final Answer**: **{0}**\n".format(internals["response"]))
+    parts.append("---\n")
+
+    parts.append("## 🎯 Layer-by-Layer Predictions\n")
+    parts.append("_At each layer, the model predicts what the answer should be._\n")
+    parts.append("_Watch how the prediction evolves from early layers (uncertain) to final layers (confident):_\n\n")
+
+    layer_predictions = internals["layer_predictions"]
+
+    # Show every 3rd layer to avoid clutter (or all if few layers)
+    num_layers = len(layer_predictions)
+    if num_layers > 15:
+        # Show layers: 0, 3, 6, 9, ..., last
+        layer_indices = list(range(0, num_layers, 3)) + [num_layers - 1]
+    else:
+        layer_indices = range(num_layers)
+
+    for layer_idx in layer_indices:
+        if layer_idx >= len(layer_predictions):
+            continue
+
+        layer_data = layer_predictions[layer_idx]
+        predictions = layer_data["predictions"]
+
+        # Clean and filter predictions
+        clean_preds = []
+        for pred in predictions[:5]:
+            token = pred["token"]
+            prob = pred["probability"]
+
+            result = clean_token(token)
+            if result:
+                display_token, _ = result
+                if display_token and len(display_token) > 0:
+                    clean_preds.append({
+                        "token": display_token,
+                        "prob": prob
+                    })
+
+        if not clean_preds:
+            continue
+
+        # Show layer number
+        parts.append(f"### Layer {layer_idx}\n")
+
+        # Show top 3 predictions
+        for i, pred in enumerate(clean_preds[:3]):
+            token = pred["token"]
+            prob = pred["prob"]
+
+            if i == 0:
+                # Top prediction - show prominently
+                parts.append(f"**Top prediction**: `{token}` ({prob*100:.1f}%)\n")
+            else:
+                # Alternatives
+                if i == 1:
+                    parts.append("**Alternatives**:\n")
+                parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
+
+        parts.append("\n")
+
+    parts.append("---\n")
+    parts.append("## ✅ Final Answer\n")
+    parts.append(f"**{internals['response']}**\n")
+    parts.append("_The final layer's prediction becomes the model's answer._\n")
+
+    return "\n".join(parts)
+
+
 if __name__ == "__main__":
     # Test with synthetic data
     print("Testing answer generation flow...")
@@ -473,4 +571,47 @@ if __name__ == "__main__":
     flow = create_answer_generation_flow(internals, vocab)
     print(flow)
 
-    print("\n✅ Test complete!")
+    print("\n" + "="*60)
+    print("Testing layer-by-layer visualization...")
+    print("="*60 + "\n")
+
+    # Mock layer predictions (logit lens)
+    layer_predictions = []
+    for layer in range(num_layers):
+        if layer < 7:
+            # Early layers: uncertain, maybe wrong predictions
+            preds = [
+                {"token": "▁Sydney", "probability": 0.15},
+                {"token": "▁Melbourne", "probability": 0.12},
+                {"token": "▁The", "probability": 0.08},
+            ]
+        elif layer < 15:
+            # Middle layers: Canberra emerging
+            preds = [
+                {"token": "▁Canberra", "probability": 0.25},
+                {"token": "▁Sydney", "probability": 0.18},
+                {"token": "▁Melbourne", "probability": 0.10},
+            ]
+        else:
+            # Late layers: confident Canberra
+            preds = [
+                {"token": "▁Canberra", "probability": 0.65},
+                {"token": "▁Sydney", "probability": 0.08},
+                {"token": "▁Melbourne", "probability": 0.03},
+            ]
+
+        layer_predictions.append({
+            "layer": layer,
+            "predictions": preds
+        })
+
+    layer_internals = {
+        "input_tokens": input_tokens,
+        "response": "Canberra",
+        "layer_predictions": layer_predictions
+    }
+
+    layer_viz = create_layer_by_layer_visualization(layer_internals, vocab)
+    print(layer_viz)
+
+    print("\n✅ All tests complete!")
