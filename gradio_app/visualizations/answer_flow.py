@@ -187,12 +187,20 @@ def analyze_layer_stages(
     """
     Divide layers into stages and analyze what happens at each stage.
 
+    Parameters
+    ----------
+    logits_per_layer : np.ndarray
+        Shape: (num_layers, vocab_size)
+        Logits at each layer for the LAST generated token
+    vocab : list[str]
+        Vocabulary
+    num_stages : int
+        Number of stages to divide layers into
+
     Returns
     -------
     analysis : dict with keys:
         - stages: list of {name, layer_range, top_predictions, description}
-        - final_answer: str
-        - confidence: float
     """
     num_layers = logits_per_layer.shape[0]
 
@@ -252,50 +260,8 @@ def analyze_layer_stages(
             "description": desc
         })
 
-    # Get final answer from last layer - try top predictions until we find a clean one
-    final_logits = logits_per_layer[-1]
-    final_probs = np.exp(final_logits - final_logits.max())
-    final_probs /= final_probs.sum()
-
-    # Try top 20 predictions to find clean tokens
-    top_indices = np.argsort(final_probs)[-20:][::-1]
-    final_answer = None
-    final_confidence = 0.0
-    alternatives = []
-
-    for idx in top_indices:
-        final_token = vocab[idx] if idx < len(vocab) else None
-        if final_token:
-            result = clean_token(final_token)
-            if result:
-                cleaned_token = result[0]
-                prob = float(final_probs[idx])
-
-                if final_answer is None:
-                    # This is the top prediction
-                    final_answer = cleaned_token
-                    final_confidence = prob
-                else:
-                    # This is an alternative
-                    alternatives.append({
-                        "token": cleaned_token,
-                        "probability": prob
-                    })
-
-                # Stop after finding 4 clean tokens (1 final + 3 alternatives)
-                if len(alternatives) >= 3:
-                    break
-
-    # Fallback if nothing was clean
-    if final_answer is None:
-        final_answer = "(next token)"
-        final_confidence = float(final_probs[top_indices[0]])
-
     return {
-        "stages": stages,
-        "final_answer": final_answer,
-        "confidence": final_confidence,
-        "alternatives": alternatives
+        "stages": stages
     }
 
 
@@ -404,40 +370,11 @@ def create_answer_generation_flow(
 
         parts.append("")
 
-    # Final answer
+    # Final answer - show what the model actually generated
     parts.append("---\n")
     parts.append("## ✅ Final Answer\n")
-    confidence = stage_analysis['confidence']
-
-    # Format confidence nicely
-    if confidence >= 0.01:
-        conf_str = f"{confidence*100:.1f}%"
-    else:
-        conf_str = f"{confidence*100:.2f}%"
-
-    parts.append(f"**{stage_analysis['final_answer']}** ({conf_str} confident)\n")
-
-    if confidence > 0.5:
-        parts.append("💪 _High confidence - the model is very sure_")
-    elif confidence > 0.1:
-        parts.append("🤔 _Medium confidence - some uncertainty_")
-    elif confidence > 0.01:
-        parts.append("❓ _Low confidence - uncertain_")
-    else:
-        parts.append("⚠️ _Very low confidence - highly uncertain (typical for large vocabularies)_")
-
-    # Show alternatives that were considered
-    if 'alternatives' in stage_analysis and stage_analysis['alternatives']:
-        parts.append("\n")
-        parts.append("**Alternatives considered**:\n")
-        for alt in stage_analysis['alternatives']:
-            prob = alt['probability']
-            if prob >= 0.01:
-                parts.append(f"- `{alt['token']}` ({prob*100:.1f}%)\n")
-            elif prob >= 0.001:
-                parts.append(f"- `{alt['token']}` ({prob*100:.2f}%)\n")
-            else:
-                parts.append(f"- `{alt['token']}` ({prob*100:.3f}%)\n")
+    parts.append(f"**{answer}**\n")
+    parts.append("_The model successfully generated this response_\n")
 
     return "\n".join(parts)
 
