@@ -303,6 +303,8 @@ def create_answer_generation_flow(
 
     # Word importance
     parts.append("## 📊 Which Words Mattered Most?\n")
+    parts.append("_The model used attention to focus on these input words when generating the answer:_\n")
+
     word_scores = analyze_word_importance(
         internals["attentions"],
         internals["input_tokens"],
@@ -321,61 +323,14 @@ def create_answer_generation_flow(
 
                 parts.append(f"**{word}** {bar} {percentage}%\n")
 
-        parts.append("💡 _The model paid most attention to these words when generating the answer_\n")
+        parts.append("💡 _These words received the most attention from the model during generation_\n")
 
     parts.append("---\n")
 
-    # Processing stages
-    parts.append("## 🔄 Processing Pipeline\n")
-    parts.append("_The model processes information in 3 stages:_\n")
-
-    stage_analysis = analyze_layer_stages(
-        internals["logits_per_layer"],
-        vocab,
-        num_stages=3
-    )
-
-    stage_emojis = ["🔍", "🧠", "✍️"]
-
-    for i, stage in enumerate(stage_analysis["stages"]):
-        emoji = stage_emojis[i]
-        name = stage["name"]
-        start, end = stage["layer_range"]
-        desc = stage["description"]
-
-        parts.append(f"### {emoji} Stage {i+1}: {name}")
-        parts.append(f"_Layers {start}-{end}_\n")
-        parts.append(f"{desc}\n")
-
-        # Show top predictions at this stage - show alternatives even if weak
-        if stage["top_predictions"]:
-            parts.append("**Leading predictions at this stage**:\n")
-            shown_any = False
-            for pred in stage["top_predictions"]:
-                token = pred["token"]
-                prob = pred["probability"]
-                # Show anything above 0.01% (much more permissive)
-                if prob >= 0.0001:
-                    if prob >= 0.01:
-                        parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
-                    elif prob >= 0.001:
-                        parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
-                    else:
-                        parts.append(f"- `{token}` ({prob*100:.3f}%)\n")
-                    shown_any = True
-
-            if not shown_any:
-                parts.append("- _(all predictions below 0.01% - model very uncertain at this stage)_\n")
-        else:
-            parts.append("**Leading predictions at this stage**: _(no predictions found)_\n")
-
-        parts.append("")
-
-    # Final answer - show what the model actually generated
-    parts.append("---\n")
-    parts.append("## ✅ Final Answer\n")
+    # Show the answer prominently
+    parts.append("## ✅ Generated Answer\n")
     parts.append(f"**{answer}**\n")
-    parts.append("_The model successfully generated this response_\n")
+    parts.append("_The model successfully generated this response by attending to the key words in your question._\n")
 
     return "\n".join(parts)
 
