@@ -581,29 +581,30 @@ if __name__ == "__main__":
     print("Testing layer-by-layer visualization...")
     print("="*60 + "\n")
 
-    # Mock layer predictions (logit lens)
+    # Mock layer predictions (logit lens) - NEW FORMAT with is_actual_answer flag
     layer_predictions = []
     for layer in range(num_layers):
         if layer < 7:
-            # Early layers: uncertain, maybe wrong predictions
+            # Early layers: Canberra has low probability, alternatives higher
             preds = [
-                {"token": "▁Sydney", "probability": 0.15},
-                {"token": "▁Melbourne", "probability": 0.12},
-                {"token": "▁The", "probability": 0.08},
+                {"token": "Canberra", "probability": 0.05, "is_actual_answer": True},  # Actual answer, low prob
+                {"token": "▁Sydney", "probability": 0.15, "is_actual_answer": False},
+                {"token": "▁Melbourne", "probability": 0.12, "is_actual_answer": False},
+                {"token": "▁The", "probability": 0.08, "is_actual_answer": False},
             ]
         elif layer < 15:
-            # Middle layers: Canberra emerging
+            # Middle layers: Canberra climbing but not yet top
             preds = [
-                {"token": "▁Canberra", "probability": 0.25},
-                {"token": "▁Sydney", "probability": 0.18},
-                {"token": "▁Melbourne", "probability": 0.10},
+                {"token": "Canberra", "probability": 0.25, "is_actual_answer": True},  # Getting stronger
+                {"token": "▁Sydney", "probability": 0.18, "is_actual_answer": False},
+                {"token": "▁Melbourne", "probability": 0.10, "is_actual_answer": False},
             ]
         else:
-            # Late layers: confident Canberra
+            # Late layers: Canberra dominates
             preds = [
-                {"token": "▁Canberra", "probability": 0.65},
-                {"token": "▁Sydney", "probability": 0.08},
-                {"token": "▁Melbourne", "probability": 0.03},
+                {"token": "Canberra", "probability": 0.65, "is_actual_answer": True},  # Confident!
+                {"token": "▁Sydney", "probability": 0.08, "is_actual_answer": False},
+                {"token": "▁Melbourne", "probability": 0.03, "is_actual_answer": False},
             ]
 
         layer_predictions.append({
