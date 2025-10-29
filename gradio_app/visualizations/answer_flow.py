@@ -12,32 +12,55 @@ from typing import List, Dict, Tuple
 import re
 
 
-def clean_token(token: str) -> str:
+def clean_token(token: str) -> tuple:
     """
     Clean tokenizer artifacts from tokens.
 
-    Returns None if token is just noise (special tokens, whitespace, etc.)
+    Returns
+    -------
+    (cleaned_token, has_space) : tuple or None
+        cleaned_token: str without artifacts
+        has_space: bool indicating if this starts a new word
+        Returns None if token is just noise
     """
-    # Remove these entirely
+    # Remove these entirely - be very aggressive with chat template tokens
+    if not token or len(token) == 0:
+        return None
+
+    # Direct string matches for chat template
+    if token in ['<|user|>', '<|assistant|>', '<|im_start|>', '<|im_end|>', '<|system|>']:
+        return None
+
+    # Pattern-based filtering
     noise_patterns = [
-        r'^<[^>]+>$',      # <s>, </s>, <pad>, etc.
-        r'^<0x[0-9A-F]+>$', # <0x0A>, etc.
+        r'<[^>]*>',         # Anything in angle brackets
         r'^▁+$',            # Just underscores
         r'^\s+$',           # Just whitespace
+        r'^[<>|]+$',        # Just brackets and pipes
     ]
 
     for pattern in noise_patterns:
         if re.match(pattern, token):
             return None
 
-    # Clean up the token
-    token = token.replace('▁', ' ')  # Replace underscore with space
+    # Check for SentencePiece word boundary marker
+    has_leading_space = token.startswith('▁')
+
+    # Clean the token
+    token = token.replace('▁', '')
     token = token.strip()
 
-    if len(token) == 0:
+    # Filter garbage
+    if len(token) == 0 or len(token) > 50:
         return None
 
-    return token
+    # Only keep tokens that look like actual words/punctuation
+    if not re.search(r'[a-zA-Z0-9]', token):
+        # No alphanumeric characters - probably garbage unless it's punctuation
+        if token not in ['.', ',', '!', '?', ':', ';', '-', "'", '"']:
+            return None
+
+    return (token, has_leading_space)
 
 
 def get_clean_words(tokens: List[str]) -> List[Tuple[str, List[int]]]:
@@ -53,22 +76,29 @@ def get_clean_words(tokens: List[str]) -> List[Tuple[str, List[int]]]:
     current_indices = []
 
     for i, token in enumerate(tokens):
-        cleaned = clean_token(token)
-        if cleaned is None:
+        result = clean_token(token)
+        if result is None:
             continue
 
-        # Check if this starts a new word (has leading space or is first)
-        if cleaned.startswith(' ') or (not current_word and cleaned):
-            if current_word:
-                words.append((current_word.strip(), current_indices))
+        cleaned, has_leading_space = result
+
+        # If this starts a new word, save the previous one
+        if has_leading_space and current_word:
+            words.append((current_word, current_indices))
+            current_word = cleaned
+            current_indices = [i]
+        elif has_leading_space and not current_word:
+            # First word
             current_word = cleaned
             current_indices = [i]
         else:
+            # Continue building current word (subword token)
             current_word += cleaned
             current_indices.append(i)
 
+    # Don't forget the last word
     if current_word:
-        words.append((current_word.strip(), current_indices))
+        words.append((current_word, current_indices))
 
     return words
 
@@ -165,12 +195,14 @@ def analyze_layer_stages(
 
         for idx in top_indices:
             token = vocab[idx] if idx < len(vocab) else f"<{idx}>"
-            cleaned = clean_token(token)
-            if cleaned and len(cleaned) > 0:
-                top_predictions.append({
-                    "token": cleaned,
-                    "probability": float(probs[idx])
-                })
+            result = clean_token(token)
+            if result:
+                cleaned, _ = result
+                if len(cleaned) > 0:
+                    top_predictions.append({
+                        "token": cleaned,
+                        "probability": float(probs[idx])
+                    })
 
         # Description based on stage
         if i == 0:
@@ -194,7 +226,8 @@ def analyze_layer_stages(
 
     final_idx = np.argmax(final_probs)
     final_token = vocab[final_idx] if final_idx < len(vocab) else f"<{final_idx}>"
-    final_answer = clean_token(final_token) or "?"
+    result = clean_token(final_token)
+    final_answer = result[0] if result else "?"
     final_confidence = float(final_probs[final_idx])
 
     return {
