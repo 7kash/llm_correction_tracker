@@ -199,20 +199,24 @@ def analyze_layer_stages(
         probs = np.exp(logits - logits.max())
         probs /= probs.sum()
 
-        # Get top 3 predictions
-        top_indices = np.argsort(probs)[-3:][::-1]
+        # Get top predictions - try more to find clean tokens
+        top_indices = np.argsort(probs)[-20:][::-1]  # Try top 20
         top_predictions = []
 
         for idx in top_indices:
-            token = vocab[idx] if idx < len(vocab) else f"<{idx}>"
-            result = clean_token(token)
-            if result:
-                cleaned, _ = result
-                if len(cleaned) > 0:
-                    top_predictions.append({
-                        "token": cleaned,
-                        "probability": float(probs[idx])
-                    })
+            if len(top_predictions) >= 3:  # Stop after finding 3 clean ones
+                break
+
+            token = vocab[idx] if idx < len(vocab) else None
+            if token:
+                result = clean_token(token)
+                if result:
+                    cleaned, _ = result
+                    if len(cleaned) > 0:
+                        top_predictions.append({
+                            "token": cleaned,
+                            "probability": float(probs[idx])
+                        })
 
         # Description based on stage
         if i == 0:
@@ -229,16 +233,29 @@ def analyze_layer_stages(
             "description": desc
         })
 
-    # Get final answer from last layer
+    # Get final answer from last layer - try top predictions until we find a clean one
     final_logits = logits_per_layer[-1]
     final_probs = np.exp(final_logits - final_logits.max())
     final_probs /= final_probs.sum()
 
-    final_idx = np.argmax(final_probs)
-    final_token = vocab[final_idx] if final_idx < len(vocab) else f"<{final_idx}>"
-    result = clean_token(final_token)
-    final_answer = result[0] if result else "?"
-    final_confidence = float(final_probs[final_idx])
+    # Try top 10 predictions to find a clean token
+    top_indices = np.argsort(final_probs)[-10:][::-1]
+    final_answer = None
+    final_confidence = 0.0
+
+    for idx in top_indices:
+        final_token = vocab[idx] if idx < len(vocab) else None
+        if final_token:
+            result = clean_token(final_token)
+            if result:
+                final_answer = result[0]
+                final_confidence = float(final_probs[idx])
+                break
+
+    # Fallback if nothing was clean
+    if final_answer is None:
+        final_answer = "(next token)"
+        final_confidence = float(final_probs[top_indices[0]])
 
     return {
         "stages": stages,
@@ -336,11 +353,14 @@ def create_answer_generation_flow(
             for pred in stage["top_predictions"][:3]:
                 token = pred["token"]
                 prob = pred["probability"]
-                if prob > 0.01:  # Only show if > 1%
-                    parts.append(f"- `{token}` ({prob*100:.0f}%)\n")
+                if prob > 0.001:  # Only show if > 0.1%
+                    if prob >= 0.01:
+                        parts.append(f"- `{token}` ({prob*100:.1f}%)\n")
+                    else:
+                        parts.append(f"- `{token}` ({prob*100:.2f}%)\n")
                     shown_any = True
             if not shown_any:
-                parts.append("- _(predictions below 1% threshold)_\n")
+                parts.append("- _(predictions below 0.1% threshold)_\n")
         else:
             parts.append("**Leading predictions at this stage**: _(no clear predictions)_\n")
 
@@ -349,15 +369,24 @@ def create_answer_generation_flow(
     # Final answer
     parts.append("---\n")
     parts.append("## ✅ Final Answer\n")
-    parts.append(f"**{stage_analysis['final_answer']}** ")
-    parts.append(f"({stage_analysis['confidence']*100:.0f}% confident)\n")
+    confidence = stage_analysis['confidence']
 
-    if stage_analysis['confidence'] > 0.8:
-        parts.append("💪 _High confidence - the model is very sure_")
-    elif stage_analysis['confidence'] > 0.5:
-        parts.append("🤔 _Medium confidence - some uncertainty_")
+    # Format confidence nicely
+    if confidence >= 0.01:
+        conf_str = f"{confidence*100:.1f}%"
     else:
-        parts.append("❓ _Low confidence - model is unsure_")
+        conf_str = f"{confidence*100:.2f}%"
+
+    parts.append(f"**{stage_analysis['final_answer']}** ({conf_str} confident)\n")
+
+    if confidence > 0.5:
+        parts.append("💪 _High confidence - the model is very sure_")
+    elif confidence > 0.1:
+        parts.append("🤔 _Medium confidence - some uncertainty_")
+    elif confidence > 0.01:
+        parts.append("❓ _Low confidence - uncertain_")
+    else:
+        parts.append("⚠️ _Very low confidence - highly uncertain (typical for large vocabularies)_")
 
     return "\n".join(parts)
 
