@@ -410,12 +410,28 @@ if __name__ == "__main__":
     for i in range(200, vocab_size):
         vocab[i] = f"token_{i}"
 
-    # Mock logits - Canberra gets stronger in later layers
-    logits = np.random.randn(num_layers, vocab_size) * 0.5
+    # Mock logits - Simulate a confident model
+    # Use small random noise, then boost correct answer strongly
+    logits = np.random.randn(num_layers, vocab_size) * 0.3  # Small noise
+
     for l in range(num_layers):
         strength = l / num_layers  # Gets stronger with layers
-        logits[l, 100] += 3.0 * strength  # Canberra
-        logits[l, 101] += 2.0 * (1 - strength)  # Sydney fades
+
+        # Early layers: uncertain, multiple candidates
+        if l < num_layers // 3:
+            logits[l, 100] += 2.0  # Canberra (weak)
+            logits[l, 101] += 2.5  # Sydney (initially stronger)
+            logits[l, 102] += 1.8  # Melbourne
+        # Middle layers: Canberra emerges
+        elif l < 2 * num_layers // 3:
+            logits[l, 100] += 5.0  # Canberra (getting stronger)
+            logits[l, 101] += 3.0  # Sydney (fading)
+            logits[l, 102] += 1.5  # Melbourne (fading)
+        # Late layers: Canberra dominates (high confidence)
+        else:
+            logits[l, 100] += 10.0  # Canberra (very strong, ~10-20% after softmax)
+            logits[l, 101] += 2.0   # Sydney (much weaker)
+            logits[l, 102] += 1.0   # Melbourne (weak)
 
     # Mock attention
     seq_len = len(input_tokens) + len(output_tokens)
