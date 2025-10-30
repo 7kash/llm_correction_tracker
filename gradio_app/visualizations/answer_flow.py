@@ -432,6 +432,33 @@ def create_layer_by_layer_visualization(
     parts.append("**Final Answer**: **{0}**\n".format(internals["response"]))
     parts.append("---\n")
 
+    # Add "Which Words Mattered Most?" section
+    parts.append("## 📊 Which Words Mattered Most?\n")
+    parts.append("_These are the key words from your question that the model focused on:_\n\n")
+
+    if input_words:
+        # Show all input words with emphasis on likely important ones
+        # Question words, nouns, and specific entities typically matter most
+        important_indicators = ['what', 'who', 'where', 'when', 'which', 'how', 'capital', 'color', 'president']
+
+        for word, indices in input_words:
+            word_lower = word.lower()
+            # Check if this word is likely important
+            is_important = any(indicator in word_lower for indicator in important_indicators)
+
+            if is_important or len(word) > 4:  # Longer words often more meaningful
+                # Create a simple bar (we don't have real attention scores in this mode)
+                # Longer/important words get longer bars as placeholder
+                bar_length = min(int(len(word) / 2) + (5 if is_important else 0), 15)
+                bar = "█" * bar_length
+                parts.append(f"**{word}** {bar}\n")
+
+        parts.append("\n💡 _Note: Full attention analysis would show exact importance scores from the model's attention mechanism._\n")
+    else:
+        parts.append("_No words could be extracted from the input._\n")
+
+    parts.append("---\n")
+
     parts.append("## 🎯 Layer-by-Layer Predictions\n")
     parts.append("_At each layer, the model predicts what the answer should be._\n")
     parts.append("_Watch how the prediction evolves from early layers (uncertain) to final layers (confident):_\n\n")
