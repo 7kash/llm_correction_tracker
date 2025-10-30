@@ -525,7 +525,8 @@ def main_interface():
                 current_content = []
 
                 for line in viz_text.split('\n'):
-                    if line.strip().startswith('## '):
+                    # Split on both ## and ### level headers
+                    if line.strip().startswith('### ') or line.strip().startswith('## '):
                         if current_section and current_content:
                             sections[current_section] = '\n'.join(current_content)
                         current_section = line.strip()
