@@ -263,11 +263,14 @@ class LLMWithInternals:
         input_length = inputs.input_ids.shape[1]
 
         # Step 1: Generate actual answer FIRST
+        # Add stop tokens including newline to prevent continuing
         stop_token_ids = [
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids("<|im_end|>"),
+            self.tokenizer.convert_tokens_to_ids("\n"),
+            self.tokenizer.convert_tokens_to_ids("\n\n"),
         ]
-        stop_token_ids = [tid for tid in stop_token_ids if tid is not None]
+        stop_token_ids = [tid for tid in stop_token_ids if tid is not None and tid >= 0]
 
         with torch.no_grad():
             generated_ids = self.model.generate(
@@ -281,6 +284,27 @@ class LLMWithInternals:
 
         response_ids = generated_ids[0, input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
+
+        # Clean response: Extract just the answer (stop at newline, punctuation, etc.)
+        response_text = response_text.strip()
+
+        # Stop at first newline
+        if '\n' in response_text:
+            response_text = response_text.split('\n')[0].strip()
+
+        # Stop at common delimiters that indicate model is continuing
+        for delimiter in ['.', '!', '?', ',', ';', 'Question:', 'Answer:']:
+            if delimiter in response_text:
+                parts = response_text.split(delimiter)
+                response_text = parts[0].strip()
+                break
+
+        # If still too long, take first 1-2 words only
+        words = response_text.split()
+        if len(words) > 2:
+            response_text = ' '.join(words[:2])
+        elif len(words) == 0:
+            response_text = "ERROR"
 
         # Step 2: Forward pass on PROMPT ONLY (no cheating!)
         # This shows what each layer predicts WITHOUT seeing the answer
