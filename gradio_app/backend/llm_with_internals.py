@@ -243,10 +243,20 @@ class LLMWithInternals:
     def generate_one_word_with_layers(
         self,
         question: str,
-        max_new_tokens: int = 10
+        max_new_tokens: int = 10,
+        context: str = None
     ) -> Dict:
         """
         Generate one-word answer and show what each layer predicts (logit lens).
+
+        Parameters
+        ----------
+        question : str
+            The question to answer
+        max_new_tokens : int
+            Maximum tokens to generate
+        context : str
+            Optional context to prepend (e.g., "The answer is Green")
 
         Returns
         -------
@@ -256,7 +266,11 @@ class LLMWithInternals:
             - input_tokens: list[str]
         """
         # Format prompt for one-word answer
-        prompt = f"Answer in one word only.\n\nQuestion: {question}\nAnswer:"
+        if context:
+            # When context is provided, format it naturally
+            prompt = f"Answer in one word only.\n\n{context}\n\nQuestion: {question}\nAnswer:"
+        else:
+            prompt = f"Answer in one word only.\n\nQuestion: {question}\nAnswer:"
 
         # Tokenize
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)

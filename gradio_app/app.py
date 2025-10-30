@@ -151,26 +151,36 @@ def is_one_word_question(question: str) -> Tuple[bool, str]:
     return True, "Note: This works best with questions that have one-word answers (like 'What is X?' or 'Who is Y?')"
 
 
-def generate_one_word_answer(question: str) -> Tuple[str, str]:
+def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, str]:
     """
     Generate one-word answer and show layer-by-layer predictions (logit lens).
+
+    Parameters
+    ----------
+    question : str
+        The question to answer
+    context : str, optional
+        Additional context to prepend (e.g., "The answer is Green")
 
     Returns
     -------
     answer : str
     visualization : str (markdown)
     """
-    # Validate question
-    is_valid, message = is_one_word_question(question)
+    # Validate question (skip validation if context is provided, as it might change the format)
+    if not context:
+        is_valid, message = is_one_word_question(question)
 
-    if not is_valid:
-        error_viz = f"## ⚠️ Question Not Suitable\n\n{message}\n\n**Examples of good questions:**\n- What is the capital of Australia?\n- Who is the president of USA?\n- What color is the sky?\n"
-        return "❌ Please ask a one-word answerable question", error_viz
+        if not is_valid:
+            error_viz = f"## ⚠️ Question Not Suitable\n\n{message}\n\n**Examples of good questions:**\n- What is the capital of Australia?\n- Who is the president of USA?\n- What color is the sky?\n"
+            return "❌ Please ask a one-word answerable question", error_viz
+    else:
+        message = ""
 
     model = load_model()
 
     # Generate with layer-by-layer tracking
-    result = model.generate_one_word_with_layers(question, max_new_tokens=10)
+    result = model.generate_one_word_with_layers(question, max_new_tokens=10, context=context)
 
     # Check if answer is actually one word (3 tokens max for compound words)
     answer_word_count = len(result["response"].split())
@@ -467,13 +477,19 @@ def main_interface():
             original_answer = original_answer_cache.get(question, "Unknown")
             original_viz = original_viz_cache.get(question, "_Original visualization not found_")
 
-            # Build a prompt that includes the correction as context
-            # The correction tells the model what the RIGHT answer should be
-            # Keep the SAME question, just add context about the correct answer
-            corrected_prompt = f"The correct answer is '{correction}'. Now answer: {question}"
+            # Build context string from the correction
+            # This will be prepended to the question in a clean format
+            if len(correction.split()) <= 2:
+                # Short correction - likely just the answer word
+                correction_context = f"The correct answer is: {correction}"
+            else:
+                # Longer correction - use as fuller context
+                correction_context = f"Context: {correction}"
 
             # Generate answer with correction context
-            corrected_answer, corrected_viz = generate_one_word_answer(corrected_prompt)
+            # The backend will format it as:
+            # "Answer in one word only.\n\n{context}\n\nQuestion: {question}\nAnswer:"
+            corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
 
             # Create comparison
             comparison = f"""
@@ -484,8 +500,8 @@ def main_interface():
 **Model's Answer**: **{original_answer}**
 
 ### With Correction Context
-**Given Context**: "The correct answer is **{correction}**"
-**Same Question**: {question}
+**Context Given**: "{correction_context}"
+**Question**: {question}
 **Model's Answer**: **{corrected_answer}**
 
 ---
@@ -504,15 +520,17 @@ def main_interface():
 
 ## 💡 Interpretation
 
-This comparison shows how the model's predictions change when given correction context:
+This comparison shows how the model's layer-by-layer predictions change when given the correction:
 
 **Without Correction**:
-- The model answered "{question}" based purely on its training → **{original_answer}**
+- Prompt: "Answer in one word only. Question: {question}"
+- Answer: **{original_answer}**
 
 **With Correction**:
-- The model was told "the correct answer is {correction}" then asked the same question → **{corrected_answer}**
+- Prompt: "Answer in one word only. {correction_context} Question: {question}"
+- Answer: **{corrected_answer}**
 
-Notice how the layer-by-layer predictions evolve differently when the model has the correction as context!
+The layer predictions show how the model adapts when given the correct answer as context!
             """
 
             return gr.update(value=comparison, visible=True)
