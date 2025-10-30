@@ -349,19 +349,23 @@ def main_interface():
                 gr.Markdown("---")
 
                 gr.Markdown("### 🔄 Provide a Correction (Optional)")
-                gr.Markdown("_If the answer is wrong, provide a correction to see how the model adapts._")
+                gr.Markdown("_If the answer is wrong, click 'That's Wrong!' or provide the correct answer._")
 
-                correction_input = gr.Textbox(
-                    label="Correction (what should the correct answer be?)",
-                    placeholder="Example: Green (if the answer should be 'Green' instead of 'Yellow')",
-                    lines=2,
-                    visible=False  # Only show after first answer
-                )
+                with gr.Row():
+                    wrong_btn = gr.Button("❌ That's Wrong!", variant="stop", visible=False, scale=1)
+                    correction_input = gr.Textbox(
+                        label="Or provide correct answer",
+                        placeholder="Example: Green",
+                        lines=1,
+                        visible=False,
+                        scale=2
+                    )
 
                 with gr.Row():
                     correction_btn = gr.Button("📝 Submit Correction", variant="secondary", visible=False)
                     reset_btn = gr.Button("🔄 Reset Session", variant="secondary")
 
+                correction_status = gr.Markdown("", visible=False)  # Loading indicator
                 comparison_output = gr.Markdown("", visible=False)  # For showing before/after
 
                 turn_summary = gr.Markdown("_Ask a question to see how the model forms its answer through layers!_")
@@ -441,14 +445,60 @@ def main_interface():
         original_answer_cache = {}
         original_viz_cache = {}
 
+        def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
+            """Create side-by-side comparison view."""
+            return f"""
+## 📊 Comparison: Without Correction vs. With Correction
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+<div style="border: 2px solid #3b82f6; padding: 15px; border-radius: 8px;">
+
+### 🔵 Without Correction
+**Question**: {question}
+**Model's Answer**: **{original_answer}**
+
+{original_viz}
+
+</div>
+<div style="border: 2px solid #ef4444; padding: 15px; border-radius: 8px;">
+
+### 🔴 With Correction Context
+**Context Given**: "{correction_context}"
+**Question**: {question}
+**Model's Answer**: **{corrected_answer}**
+
+{corrected_viz}
+
+</div>
+</div>
+
+---
+
+## 💡 What Changed?
+
+**Left (Original)**: Model answered based purely on training data → **{original_answer}**
+
+**Right (Corrected)**: Model was told "{correction_context}" then asked same question → **{corrected_answer}**
+
+### Internal Model Changes:
+1. **Attention patterns**: "That's wrong" tokens attend to the previous answer
+2. **Feature activation**: Error/disagreement/negation neurons activate
+3. **Correction patterns**: Apology and factual correction pathways light up
+4. **Layer evolution**: Watch how predictions change through layers when model "knows" it was wrong
+
+The layer-by-layer visualizations show exactly how these internal changes manifest!
+            """
+
         def on_generate(question):
             """Generate answer and show layer-by-layer visualization."""
             if not question.strip():
                 return {
                     response_output: "Please enter a question!",
                     turn_summary: "_Ask a question to see how the model forms its answer!_",
+                    wrong_btn: gr.update(visible=False),
                     correction_input: gr.update(visible=False),
                     correction_btn: gr.update(visible=False),
+                    correction_status: gr.update(visible=False),
                     comparison_output: gr.update(visible=False)
                 }
 
@@ -459,92 +509,90 @@ def main_interface():
             original_answer_cache[question] = answer
             original_viz_cache[question] = visualization
 
-            # Show correction input after generation
+            # Show correction controls after generation
             return {
                 response_output: answer,
                 turn_summary: visualization,
+                wrong_btn: gr.update(visible=True),
                 correction_input: gr.update(visible=True),
                 correction_btn: gr.update(visible=True),
+                correction_status: gr.update(visible=False),
                 comparison_output: gr.update(visible=False)
             }
 
+        def on_wrong_clicked(question):
+            """Handle 'That's Wrong!' button - tell model its answer was wrong."""
+            # Get original answer from cache
+            original_answer = original_answer_cache.get(question, "Unknown")
+            original_viz = original_viz_cache.get(question, "_Original visualization not found_")
+
+            # Use "That's wrong" without providing correct answer
+            # This activates error/disagreement patterns
+            correction_context = f"That's wrong. Try again."
+
+            # Show loading indicator
+            status_msg = "🔄 Generating with correction context..."
+
+            # Generate answer with correction context
+            corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
+
+            # Create comparison (same as on_correction but without user-provided answer)
+            comparison = create_comparison_view(
+                question, original_answer, original_viz,
+                correction_context, corrected_answer, corrected_viz
+            )
+
+            return gr.update(value=comparison, visible=True), gr.update(visible=False)
+
         def on_correction(question, correction):
-            """Handle correction and show comparison."""
+            """Handle manual correction with specific answer."""
             if not correction.strip():
-                return gr.update(value="Please enter a correction!", visible=True)
+                return gr.update(value="Please enter a correction!", visible=True), gr.update(visible=False)
 
             # Get original answer from cache (don't re-generate!)
             original_answer = original_answer_cache.get(question, "Unknown")
             original_viz = original_viz_cache.get(question, "_Original visualization not found_")
 
             # Build context string from the correction
-            # This will be prepended to the question in a clean format
+            # Based on how models handle "That's wrong" - activates:
+            # 1. Error/disagreement/negation features
+            # 2. Attention to the wrong statement
+            # 3. Apology and correction patterns
             if len(correction.split()) <= 2:
-                # Short correction - likely just the answer word
-                correction_context = f"The correct answer is: {correction}"
+                # Short correction - user provided just the correct answer
+                # Activate correction pattern: "Previous answer was wrong, correct is X"
+                correction_context = f"That's wrong. The correct answer is: {correction}."
             else:
-                # Longer correction - use as fuller context
-                correction_context = f"Context: {correction}"
+                # Longer correction - user explained why it's wrong
+                correction_context = f"That's wrong. {correction}"
 
             # Generate answer with correction context
-            # The backend will format it as:
-            # "Answer in one word only.\n\n{context}\n\nQuestion: {question}\nAnswer:"
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
 
-            # Create comparison
-            comparison = f"""
-## 📊 Comparison: Without Correction vs. With Correction
+            # Create comparison using helper
+            comparison = create_comparison_view(
+                question, original_answer, original_viz,
+                correction_context, corrected_answer, corrected_viz
+            )
 
-### Without Correction
-**Question**: {question}
-**Model's Answer**: **{original_answer}**
-
-### With Correction Context
-**Context Given**: "{correction_context}"
-**Question**: {question}
-**Model's Answer**: **{corrected_answer}**
-
----
-
-## 🔬 Layer-by-Layer: Without Correction
-
-{original_viz}
-
----
-
-## 🔬 Layer-by-Layer: With Correction Context
-
-{corrected_viz}
-
----
-
-## 💡 Interpretation
-
-This comparison shows how the model's layer-by-layer predictions change when given the correction:
-
-**Without Correction**:
-- Prompt: "Answer in one word only. Question: {question}"
-- Answer: **{original_answer}**
-
-**With Correction**:
-- Prompt: "Answer in one word only. {correction_context} Question: {question}"
-- Answer: **{corrected_answer}**
-
-The layer predictions show how the model adapts when given the correct answer as context!
-            """
-
-            return gr.update(value=comparison, visible=True)
+            return gr.update(value=comparison, visible=True), gr.update(visible=False)
 
         generate_btn.click(
             fn=on_generate,
             inputs=[question_input],
-            outputs=[response_output, turn_summary, correction_input, correction_btn, comparison_output]
+            outputs=[response_output, turn_summary, wrong_btn, correction_input, correction_btn, correction_status, comparison_output]
+        )
+
+        wrong_btn.click(
+            fn=on_wrong_clicked,
+            inputs=[question_input],
+            outputs=[comparison_output, correction_status]
         )
 
         correction_btn.click(
             fn=on_correction,
             inputs=[question_input, correction_input],
-            outputs=[comparison_output]
+            outputs=[comparison_output, correction_status]
         )
 
         def on_reset():
@@ -553,15 +601,17 @@ The layer predictions show how the model adapts when given the correct answer as
             return (
                 result["response"],  # response_output
                 result["summary"],   # turn_summary
+                gr.update(visible=False),  # wrong_btn
                 gr.update(visible=False, value=""),  # correction_input
                 gr.update(visible=False),  # correction_btn
+                gr.update(visible=False),  # correction_status
                 gr.update(visible=False, value="")  # comparison_output
             )
 
         reset_btn.click(
             fn=on_reset,
             inputs=[],
-            outputs=[response_output, turn_summary, correction_input, correction_btn, comparison_output]
+            outputs=[response_output, turn_summary, wrong_btn, correction_input, correction_btn, correction_status, comparison_output]
         )
 
         visualize_attn_btn.click(
