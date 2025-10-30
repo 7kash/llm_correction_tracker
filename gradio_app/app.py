@@ -307,210 +307,207 @@ def reset_session():
 # ============================================================================
 
 def main_interface():
-    # Custom theme with professional color scheme
-    custom_theme = gr.themes.Soft(
-        primary_hue="blue",
-        secondary_hue="purple",
+    # Minimalistic monochrome theme
+    minimal_theme = gr.themes.Monochrome(
+        primary_hue="slate",
+        secondary_hue="slate",
         neutral_hue="slate",
+        font=("system-ui", "sans-serif"),
     ).set(
-        button_primary_background_fill="#6AA8FF",
-        button_primary_background_fill_hover="#7EE3DC",
+        body_background_fill="white",
+        button_primary_background_fill="#111827",
+        button_primary_background_fill_hover="#374151",
         button_primary_text_color="white",
-        button_secondary_background_fill="#B29CFF",
-        button_secondary_background_fill_hover="#FBCFE8",
+        button_secondary_background_fill="white",
+        button_secondary_background_fill_hover="#F9FAFB",
+        button_secondary_border_color="#E5E7EB",
+        button_secondary_text_color="#111827",
+        input_background_fill="#FAFAFA",
+        block_border_width="0px",
+        block_shadow="none",
     )
 
     with gr.Blocks(
-        title="🧠 LLM Inference Tracker",
-        theme=custom_theme,
+        title="LLM under the hood",
+        theme=minimal_theme,
         css="""
-        .header-box {
-            background: linear-gradient(135deg, #6AA8FF 0%, #B29CFF 100%);
-            padding: 2rem;
-            border-radius: 12px;
-            color: white;
-            margin-bottom: 1.5rem;
+        /* Minimalistic elegant styling */
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
         }
-        .guide-box {
-            background: #F9FAFB;
-            border: 2px solid #CBD5E1;
-            border-radius: 8px;
-            padding: 1.5rem;
+        .title-section {
+            text-align: center;
+            padding: 4rem 2rem 2rem 2rem;
+            margin-bottom: 2rem;
         }
-        .markdown-box {
+        .title-main {
+            font-size: 1.875rem;
+            font-weight: 300;
+            letter-spacing: -0.02em;
+            color: #111827;
+            margin: 0 0 0.75rem 0;
+        }
+        .title-subtitle {
+            font-size: 0.9375rem;
+            font-weight: 400;
+            color: #6B7280;
+            margin: 0;
             line-height: 1.6;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .guide-inline {
+            background: #FAFAFA;
+            padding: 1.5rem;
+            margin: 2rem auto;
+            font-size: 0.875rem;
+            color: #6B7280;
+            line-height: 1.8;
+            max-width: 800px;
+            border-left: 2px solid #111827;
+        }
+        .section-divider {
+            height: 1px;
+            background: #E5E7EB;
+            margin: 3rem 0;
+        }
+        /* Smaller buttons */
+        button {
+            padding: 0.5rem 1.25rem !important;
+            font-size: 0.875rem !important;
+            font-weight: 400 !important;
+            border-radius: 2px !important;
+        }
+        /* Clean inputs */
+        input, textarea {
+            border: 1px solid #E5E7EB !important;
+            border-radius: 2px !important;
+            font-size: 0.875rem !important;
+        }
+        /* Theory boxes */
+        .theory-box {
+            background: #FAFAFA;
+            border-left: 2px solid #111827;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
         }
         """
     ) as demo:
 
         gr.HTML("""
-        <div class="header-box">
-            <h1 style="margin: 0 0 1rem 0; font-size: 2.5rem;">🧠 LLM Layer-by-Layer Visualization</h1>
-            <p style="font-size: 1.2rem; margin: 0 0 1rem 0; opacity: 0.95;">
-                See how a language model forms its answer through all 22 layers!
-            </p>
-            <p style="margin: 0; opacity: 0.9;">
-                Ask a one-word answerable question and watch the model's prediction evolve from uncertain (early layers) to confident (final layers).
+        <div class="title-section">
+            <h1 class="title-main">LLM under the hood</h1>
+            <p class="title-subtitle">
+                Observe the internal mechanisms of language models as they process information.<br>
+                See what happens when you tell an LLM it's wrong.
             </p>
         </div>
         """)
 
-        gr.Markdown("""
-        <div class="markdown-box">
-
-        ### 🎯 What You'll See:
-        - **🔬 Layer-by-Layer Predictions**: The answer at each of 22 layers with probabilities
-        - **📊 Attention Patterns**: Which words the model focused on
-        - **🔢 Softmax Transformation**: How raw scores become probabilities
-        - **🎯 Top Alternatives**: Other answers the model considered
-        - **🔄 Before/After Corrections**: Compare how corrections affect predictions
-
-        **Model**: TinyLlama-1.1B (runs locally, ~2-5 seconds per response)
-
+        gr.HTML("""
+        <div class="guide-inline">
+            <strong>How it works:</strong> Ask a question with a one-word answer. Watch the model's attention patterns,
+            layer-by-layer predictions, and probability distributions. Correct the model to see how it adapts its internal representations.
+            <br><br>
+            <strong>Example:</strong> "What color is banana?" → Model answers → Tell it "That's wrong" or provide the correct answer → Compare before and after.
+            <br><br>
+            <strong>Model:</strong> TinyLlama-1.1B (22 layers, ~2-5 seconds per response)
         </div>
+        """)
 
-        ---
-        """, elem_classes=["markdown-box"])
+        gr.HTML('<div class="section-divider"></div>')
 
-        with gr.Row():
-            with gr.Column(scale=2):
-                gr.Markdown("### 💬 Ask a Question")
-                gr.Markdown("_Ask questions that can be answered in one word (e.g., 'What is the capital of Australia?')_")
-
+        with gr.Tabs():
+            with gr.Tab("Query"):
                 question_input = gr.Textbox(
-                    label="Question (expecting one-word answer)",
-                    placeholder="Example: What is the capital of Australia?",
-                    lines=2
+                    label="",
+                    placeholder="What is the capital of Australia?",
+                    lines=1,
+                    show_label=False,
+                    container=False
                 )
 
-                generate_btn = gr.Button("🧠 Generate Answer & Show Layers", variant="primary", size="lg")
+                generate_btn = gr.Button("Generate", variant="primary", size="sm")
 
                 response_output = gr.Textbox(
                     label="Model's Answer",
-                    lines=2,
+                    lines=1,
                     interactive=False
                 )
 
-                gr.Markdown("---")
+                turn_summary = gr.Markdown("")
 
-                gr.Markdown("### 🔄 Provide a Correction (Optional)")
-                gr.Markdown("_If the answer is wrong, click 'That's Wrong!' or provide the correct answer._")
+            with gr.Tab("Correction"):
+                gr.Markdown("_If the model's answer was incorrect, provide feedback:_")
 
                 with gr.Row():
-                    wrong_btn = gr.Button("❌ That's Wrong!", variant="stop", visible=False, scale=1)
+                    wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
                     correction_input = gr.Textbox(
-                        label="Or provide correct answer",
-                        placeholder="Example: Green",
+                        label="",
+                        placeholder="Or type the correct answer",
                         lines=1,
-                        visible=False,
+                        show_label=False,
                         scale=2
                     )
 
-                with gr.Row():
-                    correction_btn = gr.Button("📝 Submit Correction", variant="secondary", visible=False)
-                    reset_btn = gr.Button("🔄 Reset Session", variant="secondary")
+                correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
 
-                correction_status = gr.Markdown("", visible=False)  # Loading indicator
-                comparison_output = gr.Markdown("", visible=False)  # For showing before/after
+                comparison_output = gr.Markdown("")
 
-                turn_summary = gr.Markdown("_Ask a question to see how the model forms its answer through layers!_")
-
-            with gr.Column(scale=1):
+            with gr.Tab("Theory"):
                 gr.HTML("""
-                <div class="guide-box">
-                    <h3 style="margin-top: 0; color: #1F2937;">ℹ️ Quick Guide</h3>
+                <div class="theory-box">
+                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
+                        What happens when you correct an LLM?
+                    </h3>
+                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
+                        <p>When you provide a correction, the model processes it as additional context. This triggers several internal changes:</p>
+                        <ol>
+                            <li><strong>Attention Reweighting:</strong> The model shifts attention to correction-related tokens</li>
+                            <li><strong>Feature Activation:</strong> Error-detection and disagreement neurons activate</li>
+                            <li><strong>Layer Progression:</strong> Early layers process the contradiction, later layers synthesize the correction</li>
+                        </ol>
+                        <p>The visualizations show these changes quantitatively through attention distributions and layer-wise predictions.</p>
+                    </div>
+                </div>
 
-                    <h4 style="color: #475569; margin-bottom: 0.5rem;">📝 How to use:</h4>
-                    <ol style="color: #475569; line-height: 1.8;">
-                        <li>Ask a one-word answerable question</li>
-                        <li>See how the model forms its answer through all 22 layers</li>
-                        <li>Optionally provide a correction</li>
-                        <li>Compare before/after visualizations</li>
-                    </ol>
-
-                    <h4 style="color: #475569; margin-bottom: 0.5rem;">✨ Best questions:</h4>
-                    <ul style="color: #475569; line-height: 1.8;">
-                        <li>What is the capital of [country]?</li>
-                        <li>Who is the president of [country]?</li>
-                        <li>What color is [object]?</li>
-                        <li>When did [event] happen?</li>
-                    </ul>
-
-                    <div style="background: #CFFAFE; padding: 1rem; border-radius: 6px; margin-top: 1rem; border-left: 4px solid #7EE3DC;">
-                        <h4 style="margin-top: 0; color: #1F2937;">💡 Example:</h4>
-                        <p style="margin: 0.5rem 0; color: #475569;">
-                            <strong>Q:</strong> "What is the capital of Australia?"<br>
-                            <strong>A:</strong> Watch layers evolve from uncertain → confident<br>
-                            <strong>Correction:</strong> "That's wrong!"<br>
-                            <strong>Result:</strong> See comparison!
+                <div class="theory-box">
+                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
+                        Attention Mechanism
+                    </h3>
+                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
+                        <p>The model assigns weights to each input token to determine relevance.</p>
+                        <p style="font-family: Georgia, serif; font-style: italic; margin: 1rem 0;">
+                            Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d<sub>k</sub>) V
                         </p>
+                        <p>Higher attention scores indicate stronger influence on the output.</p>
+                    </div>
+                </div>
+
+                <div class="theory-box">
+                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
+                        Softmax Transformation
+                    </h3>
+                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
+                        <p>Raw model outputs (logits) are transformed into probabilities:</p>
+                        <p style="font-family: Georgia, serif; font-style: italic; margin: 1rem 0;">
+                            softmax(z<sub>i</sub>) = exp(z<sub>i</sub>) / Σ exp(z<sub>j</sub>)
+                        </p>
+                        <p>This ensures outputs sum to 1.0 and amplifies differences between scores.</p>
+                    </div>
+                </div>
+
+                <div class="theory-box">
+                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
+                        Logit Lens
+                    </h3>
+                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
+                        <p>The logit lens technique reveals intermediate predictions by projecting hidden states from any layer through the final prediction head.</p>
+                        <p>Early layers show uncertainty; later layers converge on the final answer as the model refines its representation.</p>
                     </div>
                 </div>
                 """)
-
-        gr.Markdown("---")
-        gr.HTML("""
-        <div style="background: linear-gradient(90deg, #7EE3DC 0%, #A4E1D2 100%); padding: 1rem 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
-            <h2 style="margin: 0; color: #1F2937;">📊 Advanced Visualizations</h2>
-            <p style="margin: 0.5rem 0 0 0; color: #475569;">Explore deeper model behaviors (optional)</p>
-        </div>
-        """)
-
-        with gr.Tab("🎯 Attention Rollout"):
-            gr.HTML("""
-            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #6AA8FF; margin-bottom: 1rem;">
-                <p style="margin: 0; color: #475569;">
-                    <strong style="color: #1F2937;">Shows:</strong> Which input tokens the model paid attention to when generating the response.
-                    <br>
-                    <strong style="color: #1F2937;">How to read:</strong> Thicker ribbons = more attention. Colors show contribution strength.
-                </p>
-            </div>
-            """)
-            turn_selector_attn = gr.Slider(
-                minimum=0, maximum=10, step=1, value=0,
-                label="Select Turn to Visualize"
-            )
-            attention_plot = gr.Plot(label="Attention Rollout")
-            visualize_attn_btn = gr.Button("🔍 Show Attention", variant="secondary")
-
-        with gr.Tab("📈 Layer Trajectories"):
-            gr.HTML("""
-            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #B29CFF; margin-bottom: 1rem;">
-                <p style="margin: 0; color: #475569;">
-                    <strong style="color: #1F2937;">Shows:</strong> How hidden representations evolve from layer 0 to final layer.
-                    <br>
-                    <strong style="color: #1F2937;">How to read:</strong> Lines show the path through 2D PCA space. Divergence = where correction takes effect.
-                </p>
-            </div>
-            """)
-            turn_selector_traj = gr.Slider(
-                minimum=0, maximum=10, step=1, value=0,
-                label="Select Turn to Visualize"
-            )
-            trajectory_plot = gr.Plot(label="Layer Trajectory")
-            visualize_traj_btn = gr.Button("🔍 Show Trajectory", variant="secondary")
-
-        with gr.Tab("🔍 Logit Lens"):
-            gr.HTML("""
-            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #7EE3DC; margin-bottom: 1rem;">
-                <p style="margin: 0; color: #475569;">
-                    <strong style="color: #1F2937;">Shows:</strong> What the model "wants to say" at each intermediate layer.
-                    <br>
-                    <strong style="color: #1F2937;">How to read:</strong> Heatmap shows top-k tokens per layer. See when prediction changes!
-                </p>
-            </div>
-            """)
-            turn_selector_logit = gr.Slider(
-                minimum=0, maximum=10, step=1, value=0,
-                label="Select Turn to Visualize"
-            )
-            logit_mode = gr.Radio(
-                choices=["heatmap", "evolution"],
-                value="heatmap",
-                label="Visualization Mode"
-            )
-            logit_plot = gr.Plot(label="Logit Lens")
-            visualize_logit_btn = gr.Button("🔍 Show Logit Lens", variant="secondary")
 
 
         # Event handlers
@@ -519,133 +516,41 @@ def main_interface():
         original_viz_cache = {}
 
         def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
-            """Create side-by-side comparison view with horizontally aligned sections."""
+            """Create minimalistic comparison view - show answer comparison first, then full corrected visualization."""
 
-            # Split visualizations into sections for alignment
-            def split_sections(viz_text):
-                sections = {}
-                current_section = None
-                current_content = []
+            # Show answer comparison first (what user wants to see)
+            html = f"""
+## Answer Comparison
 
-                for line in viz_text.split('\n'):
-                    if line.strip().startswith('## '):
-                        if current_section:
-                            sections[current_section] = '\n'.join(current_content)
-                        current_section = line.strip()
-                        current_content = [line]
-                    elif current_content:
-                        current_content.append(line)
-
-                if current_section:
-                    sections[current_section] = '\n'.join(current_content)
-
-                return sections
-
-            orig_sections = split_sections(original_viz)
-            corr_sections = split_sections(corrected_viz)
-
-            # Build aligned comparison with professional color scheme
-            html = """
-## 📊 Comparison: Without Correction vs. With Correction
-
-<table style="width: 100%; border-collapse: collapse; table-layout: fixed;">
-<tr>
-<th style="width: 50%; padding: 10px; background: #6AA8FF; color: white; border: 2px solid #475569;">
-🔵 Without Correction
-</th>
-<th style="width: 50%; padding: 10px; background: #B29CFF; color: white; border: 2px solid #475569;">
-🔴 With Correction Context
-</th>
-</tr>
-
-<tr>
-<td style="padding: 10px; border: 2px solid #6AA8FF; background: #CFFAFE; vertical-align: top;">
-
-**Question**: """ + question + """
-**Model's Answer**: **""" + original_answer + """**
-
-</td>
-<td style="padding: 10px; border: 2px solid #B29CFF; background: #FBCFE8; vertical-align: top;">
-
-**Context Given**: \"""" + correction_context + """\"
-**Question**: """ + question + """
-**Model's Answer**: **""" + corrected_answer + """**
-
-</td>
-</tr>
-"""
-
-            # Define section order: Theory sections shown once, data sections side-by-side
-            all_section_keys = set(orig_sections.keys()) | set(corr_sections.keys())
-
-            # Theory sections to show once (not duplicated)
-            theory_sections = [
-                '## 📚 Theory: Attention Mechanism',
-                '## 📚 Theory: Softmax - From Scores to Probabilities',
-                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)',
-                '## 📚 Theory: How the Final Answer is Selected'
-            ]
-
-            # Data sections to show side-by-side
-            data_sections = [
-                ('## 📊 Which Words Mattered Most?', 'Attention Data'),
-                ('## 🔢 Softmax Transformation Example (Final Layer)', 'Softmax Example'),
-                ('## 🎯 Layer-by-Layer Predictions', 'Logit Lens Data'),
-                ('## ✅ Final Answer', 'Final Answer')
-            ]
-
-            # Show theory sections once (full width)
-            for theory_key in theory_sections:
-                if theory_key in all_section_keys:
-                    # Get theory from either original or corrected (they should be the same)
-                    theory_content = orig_sections.get(theory_key) or corr_sections.get(theory_key, "_Theory not available_")
-                    html += """
-<tr>
-<td colspan="2" style="padding: 10px; border: 2px solid #CBD5E1; background: #F9FAFB; vertical-align: top;">
-
-""" + theory_content + """
-
-</td>
-</tr>
-"""
-
-            # Show data sections side-by-side
-            for section_key, section_label in data_sections:
-                if section_key in all_section_keys:
-                    html += """
-<tr>
-<td style="padding: 10px; border: 2px solid #6AA8FF; background: #CFFAFE; vertical-align: top;">
-
-""" + orig_sections.get(section_key, f"_{section_label} not available_") + """
-
-</td>
-<td style="padding: 10px; border: 2px solid #B29CFF; background: #FBCFE8; vertical-align: top;">
-
-""" + corr_sections.get(section_key, f"_{section_label} not available_") + """
-
-</td>
-</tr>
-"""
-
-            html += """
-</table>
+<div style="background: #FAFAFA; padding: 1.5rem; margin: 2rem 0; border-left: 2px solid #111827;">
+    <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+        <div style="flex: 1;">
+            <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
+                Original Answer
+            </div>
+            <div style="font-size: 1.25rem; font-weight: 500; color: #111827;">
+                {original_answer}
+            </div>
+        </div>
+        <div style="flex: 1;">
+            <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
+                After Correction
+            </div>
+            <div style="font-size: 1.25rem; font-weight: 500; color: #111827;">
+                {corrected_answer}
+            </div>
+        </div>
+    </div>
+    <div style="font-size: 0.875rem; color: #6B7280; margin-top: 1rem;">
+        Correction context: "{correction_context}"
+    </div>
+</div>
 
 ---
 
-## 💡 What Changed?
+## Corrected Response Analysis
 
-| Original (🔵) | With Correction (🔴) |
-|--------------|---------------------|
-| Answer: **""" + original_answer + """** | Answer: **""" + corrected_answer + """** |
-| Based on training data only | Told: \"""" + correction_context + """\" |
-
-### Internal Model Changes:
-1. **Attention patterns**: "That's wrong" tokens attend to the previous answer
-2. **Feature activation**: Error/disagreement/negation neurons activate
-3. **Correction patterns**: Apology and factual correction pathways light up
-4. **Layer evolution**: Watch how predictions change through layers when model "knows" it was wrong
-
-The layer-by-layer visualizations above show exactly how these internal changes manifest!
+{corrected_viz}
             """
 
             return html
@@ -653,15 +558,7 @@ The layer-by-layer visualizations above show exactly how these internal changes 
         def on_generate(question):
             """Generate answer and show layer-by-layer visualization."""
             if not question.strip():
-                return {
-                    response_output: "Please enter a question!",
-                    turn_summary: "_Ask a question to see how the model forms its answer!_",
-                    wrong_btn: gr.update(visible=False),
-                    correction_input: gr.update(visible=False),
-                    correction_btn: gr.update(visible=False),
-                    correction_status: gr.update(visible=False),
-                    comparison_output: gr.update(visible=False)
-                }
+                return ("Please enter a question!", "_Ask a question to see how the model forms its answer!_")
 
             # Generate with layer-by-layer tracking
             answer, visualization = generate_one_word_answer(question)
@@ -670,138 +567,82 @@ The layer-by-layer visualizations above show exactly how these internal changes 
             original_answer_cache[question] = answer
             original_viz_cache[question] = visualization
 
-            # Show correction controls after generation
-            return {
-                response_output: answer,
-                turn_summary: visualization,
-                wrong_btn: gr.update(visible=True),
-                correction_input: gr.update(visible=True),
-                correction_btn: gr.update(visible=True),
-                correction_status: gr.update(visible=False),
-                comparison_output: gr.update(visible=False)
-            }
+            return (answer, visualization)
 
         def on_wrong_clicked(question):
             """Handle 'That's Wrong!' button - tell model its answer was wrong."""
+            if not question or question not in original_answer_cache:
+                return "⚠️ Please generate an answer first!"
+
             # Get original answer from cache
-            original_answer = original_answer_cache.get(question, "Unknown")
-            original_viz = original_viz_cache.get(question, "_Original visualization not found_")
+            original_answer = original_answer_cache[question]
+            original_viz = original_viz_cache[question]
 
             # Use "That's wrong" without providing correct answer
-            # This activates error/disagreement patterns
-            correction_context = f"That's wrong. Try again."
+            correction_context = "That's wrong. Try again."
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
 
-            # Create comparison (same as on_correction but without user-provided answer)
+            # Create comparison
             comparison = create_comparison_view(
                 question, original_answer, original_viz,
                 correction_context, corrected_answer, corrected_viz
             )
 
-            return (
-                gr.update(visible=False),  # Hide turn_summary (original result)
-                gr.update(value=comparison, visible=True)  # Show comparison
-            )
+            return comparison
 
         def on_correction(question, correction):
             """Handle manual correction with specific answer."""
             if not correction.strip():
-                return (
-                    gr.update(visible=True),  # Keep turn_summary visible
-                    gr.update(value="⚠️ Please enter a correction!", visible=True)  # Show error
-                )
+                return "⚠️ Please enter a correction!"
 
-            # Get original answer from cache (don't re-generate!)
-            original_answer = original_answer_cache.get(question, "Unknown")
-            original_viz = original_viz_cache.get(question, "_Original visualization not found_")
+            if not question or question not in original_answer_cache:
+                return "⚠️ Please generate an answer first!"
 
-            # Build context string from the correction
-            # Based on how models handle "That's wrong" - activates:
-            # 1. Error/disagreement/negation features
-            # 2. Attention to the wrong statement
-            # 3. Apology and correction patterns
+            # Get original answer from cache
+            original_answer = original_answer_cache[question]
+            original_viz = original_viz_cache[question]
+
+            # Build context
             if len(correction.split()) <= 2:
-                # Short correction - user provided just the correct answer
-                # Activate correction pattern: "Previous answer was wrong, correct is X"
                 correction_context = f"That's wrong. The correct answer is: {correction}."
             else:
-                # Longer correction - user explained why it's wrong
                 correction_context = f"That's wrong. {correction}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
 
-            # Create comparison using helper
+            # Create comparison
             comparison = create_comparison_view(
                 question, original_answer, original_viz,
                 correction_context, corrected_answer, corrected_viz
             )
 
-            return (
-                gr.update(visible=False),  # Hide turn_summary (original result)
-                gr.update(value=comparison, visible=True)  # Show comparison
-            )
+            return comparison
 
         generate_btn.click(
             fn=on_generate,
             inputs=[question_input],
-            outputs=[response_output, turn_summary, wrong_btn, correction_input, correction_btn, correction_status, comparison_output]
+            outputs=[response_output, turn_summary],
+            show_progress="full"
         )
 
         wrong_btn.click(
             fn=on_wrong_clicked,
             inputs=[question_input],
-            outputs=[turn_summary, comparison_output],
-            show_progress="full"  # Show loading indicator
+            outputs=[comparison_output],
+            show_progress="full"
         )
 
         correction_btn.click(
             fn=on_correction,
             inputs=[question_input, correction_input],
-            outputs=[turn_summary, comparison_output],
-            show_progress="full"  # Show loading indicator
+            outputs=[comparison_output],
+            show_progress="full"
         )
 
-        def on_reset():
-            """Reset session and UI."""
-            result = reset_session()
-            return (
-                result["response"],  # response_output
-                result["summary"],   # turn_summary
-                gr.update(visible=False),  # wrong_btn
-                gr.update(visible=False, value=""),  # correction_input
-                gr.update(visible=False),  # correction_btn
-                gr.update(visible=False),  # correction_status
-                gr.update(visible=False, value="")  # comparison_output
-            )
-
-        reset_btn.click(
-            fn=on_reset,
-            inputs=[],
-            outputs=[response_output, turn_summary, wrong_btn, correction_input, correction_btn, correction_status, comparison_output]
-        )
-
-        visualize_attn_btn.click(
-            fn=visualize_attention,
-            inputs=[turn_selector_attn],
-            outputs=[attention_plot]
-        )
-
-        visualize_traj_btn.click(
-            fn=visualize_trajectories,
-            inputs=[turn_selector_traj],
-            outputs=[trajectory_plot]
-        )
-
-        visualize_logit_btn.click(
-            fn=visualize_logit_lens,
-            inputs=[turn_selector_logit, logit_mode],
-            outputs=[logit_plot]
-        )
-
-    return demo
+        return demo
 
 
 if __name__ == "__main__":
