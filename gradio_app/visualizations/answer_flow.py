@@ -428,15 +428,36 @@ def create_layer_by_layer_visualization(
     question = internals.get("question", "")
     context = internals.get("context", "")
 
-    # Create whitelist: only words from actual question (NOT from correction context)
+    # Create whitelist: words from question, correction answer, and "wrong"
     allowed_words = set()
 
-    # Add words from question ONLY
+    # Add words from question
     if question:
         question_words = question.lower().replace("?", " ").replace(".", " ").split()
         allowed_words.update(word.strip() for word in question_words if len(word.strip()) > 1)
 
-    # Do NOT add context/correction words - we only want to show attention to original question words
+    # Add words from correction context
+    if context:
+        # Always include "wrong"
+        allowed_words.add("wrong")
+
+        # Extract the actual correction answer if present
+        # Format: "That's wrong. The correct answer is: [answer]."
+        if "correct answer is:" in context.lower():
+            # Extract everything after "correct answer is:"
+            parts = context.lower().split("correct answer is:")
+            if len(parts) > 1:
+                correction_answer = parts[1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "")
+                correction_words = correction_answer.split()
+                allowed_words.update(word.strip() for word in correction_words if len(word.strip()) > 1)
+        # Also try to extract from simpler format
+        elif ":" in context:
+            # Extract everything after last colon
+            parts = context.split(":")
+            if len(parts) > 1:
+                correction_text = parts[-1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "")
+                correction_words = correction_text.split()
+                allowed_words.update(word.strip() for word in correction_words if len(word.strip()) > 1)
 
     # Get clean words from all input
     all_words = get_clean_words(input_tokens)
