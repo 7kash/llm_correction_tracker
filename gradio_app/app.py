@@ -518,26 +518,44 @@ def main_interface():
         def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
             """Create side-by-side comparison with theory shown once, data aligned horizontally."""
 
-            # Split visualizations into sections
+            # Split visualizations into sections (only on ## headers)
             def split_sections(viz_text):
                 sections = {}
                 current_section = None
                 current_content = []
 
                 for line in viz_text.split('\n'):
-                    # Split on both ## and ### level headers
-                    if line.strip().startswith('### ') or line.strip().startswith('## '):
+                    if line.strip().startswith('## '):
+                        # Save previous section
                         if current_section and current_content:
                             sections[current_section] = '\n'.join(current_content)
                         current_section = line.strip()
-                        current_content = [line]
-                    elif current_content:
+                        current_content = []  # Don't include the ## header line itself
+                    else:
                         current_content.append(line)
 
                 if current_section and current_content:
                     sections[current_section] = '\n'.join(current_content)
 
                 return sections
+
+            def extract_subsection(content, subsection_header):
+                """Extract a ### subsection from content."""
+                lines = content.split('\n')
+                extracted = []
+                capturing = False
+
+                for line in lines:
+                    if line.strip().startswith('### '):
+                        if subsection_header in line:
+                            capturing = True
+                            # Don't include the ### header line
+                        else:
+                            capturing = False
+                    elif capturing:
+                        extracted.append(line)
+
+                return '\n'.join(extracted)
 
             orig_sections = split_sections(original_viz)
             corr_sections = split_sections(corrected_viz)
@@ -599,36 +617,55 @@ With Correction
                 if theory_key in all_section_keys:
                     theory_content = orig_sections.get(theory_key) or corr_sections.get(theory_key, "")
                     if theory_content:
+                        # Remove ### subsections from theory content (they'll be shown separately in data sections)
+                        theory_lines = []
+                        for line in theory_content.split('\n'):
+                            if line.strip().startswith('### '):
+                                break  # Stop when we hit a ### subsection
+                            theory_lines.append(line)
+                        theory_content_clean = '\n'.join(theory_lines)
+
                         html += f"""
 <tr>
 <td colspan="2" style="padding: 1.5rem; border: 1px solid #E5E7EB; background: #FAFAFA; word-wrap: break-word; overflow-wrap: break-word;">
-{theory_content}
+{theory_content_clean}
 </td>
 </tr>
 """
 
             # Data sections - side by side
             data_section_pairs = [
-                ('### Attention Distribution', 'Attention'),
-                ('### Top Token Probabilities', 'Softmax'),
-                ('## ✅ Final Answer', 'Final Answer'),
-                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions')
+                ('Attention Distribution', 'Attention', '## 📚 Theory: Attention Mechanism'),
+                ('Top Token Probabilities', 'Softmax', '## 📚 Theory: Softmax Transformation'),
+                ('## ✅ Final Answer', 'Final Answer', None),
+                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions', None)
             ]
 
-            for section_key, label in data_section_pairs:
-                # Find sections that contain this key
+            for section_key, label, parent_section in data_section_pairs:
+                # Find sections
                 orig_section = None
                 corr_section = None
 
-                for key in orig_sections:
-                    if section_key in key:
-                        orig_section = orig_sections[key]
-                        break
+                if parent_section:
+                    # This is a ### subsection, extract it from parent
+                    parent_content_orig = orig_sections.get(parent_section, "")
+                    parent_content_corr = corr_sections.get(parent_section, "")
 
-                for key in corr_sections:
-                    if section_key in key:
-                        corr_section = corr_sections[key]
-                        break
+                    if parent_content_orig:
+                        orig_section = extract_subsection(parent_content_orig, section_key)
+                    if parent_content_corr:
+                        corr_section = extract_subsection(parent_content_corr, section_key)
+                else:
+                    # This is a ## section, use directly
+                    for key in orig_sections:
+                        if section_key in key:
+                            orig_section = orig_sections[key]
+                            break
+
+                    for key in corr_sections:
+                        if section_key in key:
+                            corr_section = corr_sections[key]
+                            break
 
                 if orig_section or corr_section:
                     # Special handling for Final Answer section - add question and context
@@ -714,8 +751,8 @@ _Context provided: {correction_context}_
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Simple context: only "wrong" + question + correction
-            correction_context = f"wrong {question} {correction}"
+            # Simple context: only "wrong" + correction + question
+            correction_context = f"wrong {correction} {question}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
