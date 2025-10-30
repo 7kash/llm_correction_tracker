@@ -516,15 +516,38 @@ def main_interface():
         original_viz_cache = {}
 
         def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
-            """Create minimalistic comparison view - show answer comparison first, then full corrected visualization."""
+            """Create side-by-side comparison with theory shown once, data aligned horizontally."""
 
-            # Show answer comparison first (what user wants to see)
+            # Split visualizations into sections
+            def split_sections(viz_text):
+                sections = {}
+                current_section = None
+                current_content = []
+
+                for line in viz_text.split('\n'):
+                    if line.strip().startswith('## '):
+                        if current_section and current_content:
+                            sections[current_section] = '\n'.join(current_content)
+                        current_section = line.strip()
+                        current_content = [line]
+                    elif current_content:
+                        current_content.append(line)
+
+                if current_section and current_content:
+                    sections[current_section] = '\n'.join(current_content)
+
+                return sections
+
+            orig_sections = split_sections(original_viz)
+            corr_sections = split_sections(corrected_viz)
+
+            # Start with answer comparison
             html = f"""
 ## Answer Comparison
 
 <div style="background: #FAFAFA; padding: 1.5rem; margin: 2rem 0; border-left: 2px solid #111827;">
-    <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
-        <div style="flex: 1;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 1rem;">
+        <div>
             <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
                 Original Answer
             </div>
@@ -532,7 +555,7 @@ def main_interface():
                 {original_answer}
             </div>
         </div>
-        <div style="flex: 1;">
+        <div>
             <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
                 After Correction
             </div>
@@ -548,10 +571,78 @@ def main_interface():
 
 ---
 
-## Corrected Response Analysis
+## Detailed Comparison
 
-{corrected_viz}
-            """
+<table style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0;">
+<tr>
+<th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
+Without Correction
+</th>
+<th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
+With Correction
+</th>
+</tr>
+"""
+
+            # Theory sections - show once (full width)
+            all_section_keys = set(orig_sections.keys()) | set(corr_sections.keys())
+            theory_sections = [
+                '## 📚 Theory: Attention Mechanism',
+                '## 📚 Theory: Softmax Transformation',
+                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)',
+                '## 📚 Theory: How the Final Answer is Selected'
+            ]
+
+            for theory_key in theory_sections:
+                if theory_key in all_section_keys:
+                    theory_content = orig_sections.get(theory_key) or corr_sections.get(theory_key, "")
+                    if theory_content:
+                        html += f"""
+<tr>
+<td colspan="2" style="padding: 1.5rem; border: 1px solid #E5E7EB; background: #FAFAFA;">
+{theory_content}
+</td>
+</tr>
+"""
+
+            # Data sections - side by side
+            data_section_pairs = [
+                ('### Attention Distribution', 'Attention'),
+                ('### Top Token Probabilities', 'Softmax'),
+                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions'),
+                ('## ✅ Final Answer', 'Final Answer')
+            ]
+
+            for section_key, label in data_section_pairs:
+                # Find sections that contain this key
+                orig_section = None
+                corr_section = None
+
+                for key in orig_sections:
+                    if section_key in key:
+                        orig_section = orig_sections[key]
+                        break
+
+                for key in corr_sections:
+                    if section_key in key:
+                        corr_section = corr_sections[key]
+                        break
+
+                if orig_section or corr_section:
+                    html += f"""
+<tr>
+<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white;">
+{orig_section or f"_{label} not available_"}
+</td>
+<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white;">
+{corr_section or f"_{label} not available_"}
+</td>
+</tr>
+"""
+
+            html += """
+</table>
+"""
 
             return html
 
