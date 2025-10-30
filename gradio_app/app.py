@@ -631,13 +631,29 @@ With Correction
                         break
 
                 if orig_section or corr_section:
+                    # Special handling for Final Answer section - add question and context
+                    if section_key == '## ✅ Final Answer':
+                        orig_display = f"""
+{orig_section or f"_{label} not available_"}
+
+_Original question: {question}_
+"""
+                        corr_display = f"""
+{corr_section or f"_{label} not available_"}
+
+_Context provided: {correction_context}_
+"""
+                    else:
+                        orig_display = orig_section or f"_{label} not available_"
+                        corr_display = corr_section or f"_{label} not available_"
+
                     html += f"""
 <tr>
 <td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
-{orig_section or f"_{label} not available_"}
+{orig_display}
 </td>
 <td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
-{corr_section or f"_{label} not available_"}
+{corr_display}
 </td>
 </tr>
 """
@@ -672,8 +688,8 @@ With Correction
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Include previous answer in context so model knows what was wrong
-            correction_context = f"Your previous answer was '{original_answer}'. That's wrong. Try again."
+            # Simple context: only "wrong" + question
+            correction_context = f"wrong {question}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
@@ -698,11 +714,8 @@ With Correction
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Build context with previous answer
-            if len(correction.split()) <= 2:
-                correction_context = f"Your previous answer was '{original_answer}'. That's wrong. The correct answer is: {correction}."
-            else:
-                correction_context = f"Your previous answer was '{original_answer}'. That's wrong. {correction}"
+            # Simple context: only "wrong" + question + correction
+            correction_context = f"wrong {question} {correction}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)

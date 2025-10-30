@@ -440,41 +440,15 @@ def create_layer_by_layer_visualization(
                 allowed_words.add(word)
 
     # Add words from correction context
+    # Context format is now simple: "wrong {question} {correction}"
     if context:
-        # Always include "wrong"
-        allowed_words.add("wrong")
+        # Clean context: remove markdown headers and punctuation
+        context_cleaned = context.replace("#", "").replace(".", "").replace(",", "").replace('"', "").replace("'", "").replace(":", "").replace("?", "")
 
-        # Extract the actual correction answer
-        # Try multiple formats
-        if "correct answer is:" in context.lower():
-            # Format: "That's wrong. The correct answer is: [answer]."
-            parts = context.lower().split("correct answer is:")
-            if len(parts) > 1:
-                correction_answer = parts[1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "").replace(":", "")
-                correction_words = correction_answer.split()
-                for word in correction_words:
-                    word = word.strip()
-                    if word:
-                        allowed_words.add(word)
-        elif "correct answer" in context.lower():
-            # Might be phrased differently
-            parts = context.lower().split("correct answer")
-            if len(parts) > 1:
-                # Get everything after "correct answer"
-                rest = parts[1].replace("is", "").replace(":", "").replace(".", "").replace(",", "").replace('"', "").replace("'", "").strip()
-                for word in rest.split():
-                    word = word.strip()
-                    if word:
-                        allowed_words.add(word)
-        else:
-            # Simple case: just the correction word given directly
-            # Clean and add all words from context
-            context_cleaned = context.replace(".", "").replace(",", "").replace('"', "").replace("'", "").replace(":", "")
-            for word in context_cleaned.split():
-                word = word.strip().lower()
-                # Skip common filler words but keep content words
-                if word and word not in ['the', 'is', 'a', 'an', 'that', 'this', 'try', 'again', 'please']:
-                    allowed_words.add(word)
+        for word in context_cleaned.split():
+            word = word.strip().lower()
+            if word:
+                allowed_words.add(word)
 
     # Get clean words from all input
     all_words = get_clean_words(input_tokens)
