@@ -338,6 +338,7 @@ class LLMWithInternals:
         actual_token_ids = response_ids.tolist()
 
         layer_predictions = []
+        softmax_example = None  # Store softmax data from final layer
 
         for layer_idx, layer_hidden in enumerate(hidden_states_tuple):
             # Get hidden state at LAST position of prompt
@@ -396,6 +397,25 @@ class LLMWithInternals:
                 "predictions": predictions
             })
 
+            # Store softmax example from final layer for educational visualization
+            if layer_idx == len(hidden_states_tuple) - 1:
+                # Get top 5 tokens with their logits and probs
+                top_logits_vals, top_logit_ids = torch.topk(logits, k=5)
+                softmax_data = []
+                for i in range(5):
+                    token_id = top_logit_ids[i].item()
+                    logit_val = float(top_logits_vals[i].item())
+                    prob_val = float(probs[token_id].item())
+                    token_str = self.tokenizer.decode([token_id])
+
+                    softmax_data.append({
+                        "token": token_str.strip(),
+                        "logit": logit_val,
+                        "probability": prob_val
+                    })
+
+                softmax_example = softmax_data
+
         input_tokens = self.tokenizer.convert_ids_to_tokens(inputs.input_ids[0])
 
         # Also tokenize just the user's question to identify which tokens are user's
@@ -432,6 +452,7 @@ class LLMWithInternals:
             "input_tokens": input_tokens,
             "user_question_tokens": user_question_tokens,  # Just user's question
             "attention_percentages": attention_percentages,  # NEW: Real attention weights
+            "softmax_example": softmax_example,  # Softmax transformation data
             "num_layers": len(layer_predictions)
         }
 

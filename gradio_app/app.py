@@ -307,25 +307,70 @@ def reset_session():
 # ============================================================================
 
 def main_interface():
-    with gr.Blocks(title="🧠 LLM Inference Tracker", theme=gr.themes.Soft()) as demo:
+    # Custom theme with professional color scheme
+    custom_theme = gr.themes.Soft(
+        primary_hue="blue",
+        secondary_hue="purple",
+        neutral_hue="slate",
+    ).set(
+        button_primary_background_fill="#6AA8FF",
+        button_primary_background_fill_hover="#7EE3DC",
+        button_primary_text_color="white",
+        button_secondary_background_fill="#B29CFF",
+        button_secondary_background_fill_hover="#FBCFE8",
+    )
+
+    with gr.Blocks(
+        title="🧠 LLM Inference Tracker",
+        theme=custom_theme,
+        css="""
+        .header-box {
+            background: linear-gradient(135deg, #6AA8FF 0%, #B29CFF 100%);
+            padding: 2rem;
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 1.5rem;
+        }
+        .guide-box {
+            background: #F9FAFB;
+            border: 2px solid #CBD5E1;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+        .markdown-box {
+            line-height: 1.6;
+        }
+        """
+    ) as demo:
+
+        gr.HTML("""
+        <div class="header-box">
+            <h1 style="margin: 0 0 1rem 0; font-size: 2.5rem;">🧠 LLM Layer-by-Layer Visualization</h1>
+            <p style="font-size: 1.2rem; margin: 0 0 1rem 0; opacity: 0.95;">
+                See how a language model forms its answer through all 22 layers!
+            </p>
+            <p style="margin: 0; opacity: 0.9;">
+                Ask a one-word answerable question and watch the model's prediction evolve from uncertain (early layers) to confident (final layers).
+            </p>
+        </div>
+        """)
 
         gr.Markdown("""
-        # 🧠 LLM Layer-by-Layer Visualization
+        <div class="markdown-box">
 
-        **See how a language model forms its answer through all 22 layers!**
-
-        Ask a one-word answerable question and watch the model's prediction evolve from uncertain (early layers) to confident (final layers).
-
-        ### What You'll See:
-        - 🔬 **Layer-by-Layer Predictions**: The answer at each of 22 layers with probabilities
-        - 🎯 **Top Alternatives**: Other answers the model considered
-        - 📊 **Confidence Evolution**: How certainty builds through layers
-        - 🔄 **Before/After Corrections**: Compare how corrections affect layer predictions
+        ### 🎯 What You'll See:
+        - **🔬 Layer-by-Layer Predictions**: The answer at each of 22 layers with probabilities
+        - **📊 Attention Patterns**: Which words the model focused on
+        - **🔢 Softmax Transformation**: How raw scores become probabilities
+        - **🎯 Top Alternatives**: Other answers the model considered
+        - **🔄 Before/After Corrections**: Compare how corrections affect predictions
 
         **Model**: TinyLlama-1.1B (runs locally, ~2-5 seconds per response)
 
+        </div>
+
         ---
-        """)
+        """, elem_classes=["markdown-box"])
 
         with gr.Row():
             with gr.Column(scale=2):
@@ -371,61 +416,89 @@ def main_interface():
                 turn_summary = gr.Markdown("_Ask a question to see how the model forms its answer through layers!_")
 
             with gr.Column(scale=1):
-                gr.Markdown("### ℹ️ Quick Guide")
-                gr.Markdown("""
-                **How to use**:
-                1. Ask a one-word answerable question
-                2. See how the model forms its answer through all 22 layers
-                3. Optionally provide a correction
-                4. Compare before/after visualizations
+                gr.HTML("""
+                <div class="guide-box">
+                    <h3 style="margin-top: 0; color: #1F2937;">ℹ️ Quick Guide</h3>
 
-                **Best questions**:
-                - What is the capital of [country]?
-                - Who is the president of [country]?
-                - What color is [object]?
-                - When did [event] happen?
+                    <h4 style="color: #475569; margin-bottom: 0.5rem;">📝 How to use:</h4>
+                    <ol style="color: #475569; line-height: 1.8;">
+                        <li>Ask a one-word answerable question</li>
+                        <li>See how the model forms its answer through all 22 layers</li>
+                        <li>Optionally provide a correction</li>
+                        <li>Compare before/after visualizations</li>
+                    </ol>
 
-                **Example**:
-                - Q: "What is the capital of Australia?"
-                - A: Watch layers evolve from uncertain → confident
-                - Correction: "Actually it's Canberra, not Sydney"
-                - See comparison!
+                    <h4 style="color: #475569; margin-bottom: 0.5rem;">✨ Best questions:</h4>
+                    <ul style="color: #475569; line-height: 1.8;">
+                        <li>What is the capital of [country]?</li>
+                        <li>Who is the president of [country]?</li>
+                        <li>What color is [object]?</li>
+                        <li>When did [event] happen?</li>
+                    </ul>
+
+                    <div style="background: #CFFAFE; padding: 1rem; border-radius: 6px; margin-top: 1rem; border-left: 4px solid #7EE3DC;">
+                        <h4 style="margin-top: 0; color: #1F2937;">💡 Example:</h4>
+                        <p style="margin: 0.5rem 0; color: #475569;">
+                            <strong>Q:</strong> "What is the capital of Australia?"<br>
+                            <strong>A:</strong> Watch layers evolve from uncertain → confident<br>
+                            <strong>Correction:</strong> "That's wrong!"<br>
+                            <strong>Result:</strong> See comparison!
+                        </p>
+                    </div>
+                </div>
                 """)
 
         gr.Markdown("---")
-        gr.Markdown("## 📊 Visualizations")
+        gr.HTML("""
+        <div style="background: linear-gradient(90deg, #7EE3DC 0%, #A4E1D2 100%); padding: 1rem 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
+            <h2 style="margin: 0; color: #1F2937;">📊 Advanced Visualizations</h2>
+            <p style="margin: 0.5rem 0 0 0; color: #475569;">Explore deeper model behaviors (optional)</p>
+        </div>
+        """)
 
         with gr.Tab("🎯 Attention Rollout"):
-            gr.Markdown("""
-            **Shows**: Which input tokens the model paid attention to when generating the response.
-
-            **How to read**: Thicker ribbons = more attention. Colors show contribution strength.
+            gr.HTML("""
+            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #6AA8FF; margin-bottom: 1rem;">
+                <p style="margin: 0; color: #475569;">
+                    <strong style="color: #1F2937;">Shows:</strong> Which input tokens the model paid attention to when generating the response.
+                    <br>
+                    <strong style="color: #1F2937;">How to read:</strong> Thicker ribbons = more attention. Colors show contribution strength.
+                </p>
+            </div>
             """)
             turn_selector_attn = gr.Slider(
                 minimum=0, maximum=10, step=1, value=0,
                 label="Select Turn to Visualize"
             )
             attention_plot = gr.Plot(label="Attention Rollout")
-            visualize_attn_btn = gr.Button("🔍 Show Attention")
+            visualize_attn_btn = gr.Button("🔍 Show Attention", variant="secondary")
 
         with gr.Tab("📈 Layer Trajectories"):
-            gr.Markdown("""
-            **Shows**: How hidden representations evolve from layer 0 to final layer.
-
-            **How to read**: Lines show the path through 2D PCA space. Divergence = where correction takes effect.
+            gr.HTML("""
+            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #B29CFF; margin-bottom: 1rem;">
+                <p style="margin: 0; color: #475569;">
+                    <strong style="color: #1F2937;">Shows:</strong> How hidden representations evolve from layer 0 to final layer.
+                    <br>
+                    <strong style="color: #1F2937;">How to read:</strong> Lines show the path through 2D PCA space. Divergence = where correction takes effect.
+                </p>
+            </div>
             """)
             turn_selector_traj = gr.Slider(
                 minimum=0, maximum=10, step=1, value=0,
                 label="Select Turn to Visualize"
             )
             trajectory_plot = gr.Plot(label="Layer Trajectory")
-            visualize_traj_btn = gr.Button("🔍 Show Trajectory")
+            visualize_traj_btn = gr.Button("🔍 Show Trajectory", variant="secondary")
 
         with gr.Tab("🔍 Logit Lens"):
-            gr.Markdown("""
-            **Shows**: What the model "wants to say" at each intermediate layer.
-
-            **How to read**: Heatmap shows top-k tokens per layer. See when prediction changes!
+            gr.HTML("""
+            <div style="background: #F9FAFB; padding: 1rem; border-radius: 6px; border-left: 4px solid #7EE3DC; margin-bottom: 1rem;">
+                <p style="margin: 0; color: #475569;">
+                    <strong style="color: #1F2937;">Shows:</strong> What the model "wants to say" at each intermediate layer.
+                    <br>
+                    <strong style="color: #1F2937;">How to read:</strong> Heatmap shows top-k tokens per layer. See when prediction changes!
+                </p>
+            </div>
             """)
             turn_selector_logit = gr.Slider(
                 minimum=0, maximum=10, step=1, value=0,
@@ -437,7 +510,7 @@ def main_interface():
                 label="Visualization Mode"
             )
             logit_plot = gr.Plot(label="Logit Lens")
-            visualize_logit_btn = gr.Button("🔍 Show Logit Lens")
+            visualize_logit_btn = gr.Button("🔍 Show Logit Lens", variant="secondary")
 
 
         # Event handlers
@@ -471,28 +544,28 @@ def main_interface():
             orig_sections = split_sections(original_viz)
             corr_sections = split_sections(corrected_viz)
 
-            # Build aligned comparison
+            # Build aligned comparison with professional color scheme
             html = """
 ## 📊 Comparison: Without Correction vs. With Correction
 
 <table style="width: 100%; border-collapse: collapse; table-layout: fixed;">
 <tr>
-<th style="width: 50%; padding: 10px; background: #3b82f6; color: white; border: 2px solid #2563eb;">
+<th style="width: 50%; padding: 10px; background: #6AA8FF; color: white; border: 2px solid #475569;">
 🔵 Without Correction
 </th>
-<th style="width: 50%; padding: 10px; background: #ef4444; color: white; border: 2px solid #dc2626;">
+<th style="width: 50%; padding: 10px; background: #B29CFF; color: white; border: 2px solid #475569;">
 🔴 With Correction Context
 </th>
 </tr>
 
 <tr>
-<td style="padding: 10px; border: 2px solid #3b82f6; vertical-align: top;">
+<td style="padding: 10px; border: 2px solid #6AA8FF; background: #CFFAFE; vertical-align: top;">
 
 **Question**: """ + question + """
 **Model's Answer**: **""" + original_answer + """**
 
 </td>
-<td style="padding: 10px; border: 2px solid #ef4444; vertical-align: top;">
+<td style="padding: 10px; border: 2px solid #B29CFF; background: #FBCFE8; vertical-align: top;">
 
 **Context Given**: \"""" + correction_context + """\"
 **Question**: """ + question + """
@@ -502,23 +575,53 @@ def main_interface():
 </tr>
 """
 
-            # Align each section horizontally
+            # Define section order: Theory sections shown once, data sections side-by-side
             all_section_keys = set(orig_sections.keys()) | set(corr_sections.keys())
 
-            for section_key in ['## 📚 Theory: Attention Mechanism', '## 📊 Which Words Mattered Most?',
-                               '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)', '## 🎯 Layer-by-Layer Predictions',
-                               '## 📚 Theory: How the Final Answer is Selected', '## ✅ Final Answer']:
+            # Theory sections to show once (not duplicated)
+            theory_sections = [
+                '## 📚 Theory: Attention Mechanism',
+                '## 📚 Theory: Softmax - From Scores to Probabilities',
+                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)',
+                '## 📚 Theory: How the Final Answer is Selected'
+            ]
+
+            # Data sections to show side-by-side
+            data_sections = [
+                ('## 📊 Which Words Mattered Most?', 'Attention Data'),
+                ('## 🔢 Softmax Transformation Example (Final Layer)', 'Softmax Example'),
+                ('## 🎯 Layer-by-Layer Predictions', 'Logit Lens Data'),
+                ('## ✅ Final Answer', 'Final Answer')
+            ]
+
+            # Show theory sections once (full width)
+            for theory_key in theory_sections:
+                if theory_key in all_section_keys:
+                    # Get theory from either original or corrected (they should be the same)
+                    theory_content = orig_sections.get(theory_key) or corr_sections.get(theory_key, "_Theory not available_")
+                    html += """
+<tr>
+<td colspan="2" style="padding: 10px; border: 2px solid #CBD5E1; background: #F9FAFB; vertical-align: top;">
+
+""" + theory_content + """
+
+</td>
+</tr>
+"""
+
+            # Show data sections side-by-side
+            for section_key, section_label in data_sections:
                 if section_key in all_section_keys:
                     html += """
 <tr>
-<td style="padding: 10px; border: 2px solid #3b82f6; vertical-align: top;">
+<td style="padding: 10px; border: 2px solid #6AA8FF; background: #CFFAFE; vertical-align: top;">
 
-""" + orig_sections.get(section_key, "_Section not available_") + """
+""" + orig_sections.get(section_key, f"_{section_label} not available_") + """
 
 </td>
-<td style="padding: 10px; border: 2px solid #ef4444; vertical-align: top;">
+<td style="padding: 10px; border: 2px solid #B29CFF; background: #FBCFE8; vertical-align: top;">
 
-""" + corr_sections.get(section_key, "_Section not available_") + """
+""" + corr_sections.get(section_key, f"_{section_label} not available_") + """
 
 </td>
 </tr>
