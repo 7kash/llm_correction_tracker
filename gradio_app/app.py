@@ -342,8 +342,8 @@ def main_interface():
                 gr.Markdown("_If the answer is wrong, provide a correction to see how the model adapts._")
 
                 correction_input = gr.Textbox(
-                    label="Correction",
-                    placeholder="Example: Actually, the capital is Canberra, not Sydney.",
+                    label="Correction (provide alternative answer or new context)",
+                    placeholder="Example: Green (for unripe banana) OR What color is unripe banana?",
                     lines=2,
                     visible=False  # Only show after first answer
                 )
@@ -427,6 +427,10 @@ def main_interface():
 
 
         # Event handlers
+        # Store original answer to avoid re-generation
+        original_answer_cache = {}
+        original_viz_cache = {}
+
         def on_generate(question):
             """Generate answer and show layer-by-layer visualization."""
             if not question.strip():
@@ -440,6 +444,10 @@ def main_interface():
 
             # Generate with layer-by-layer tracking
             answer, visualization = generate_one_word_answer(question)
+
+            # Cache for correction comparison
+            original_answer_cache[question] = answer
+            original_viz_cache[question] = visualization
 
             # Show correction input after generation
             return {
@@ -455,33 +463,63 @@ def main_interface():
             if not correction.strip():
                 return gr.update(value="Please enter a correction!", visible=True)
 
-            # Get original answer
-            original_answer, original_viz = generate_one_word_answer(question)
+            # Get original answer from cache (don't re-generate!)
+            original_answer = original_answer_cache.get(question, "Unknown")
+            original_viz = original_viz_cache.get(question, "_Original visualization not found_")
 
-            # Get corrected answer (treat correction as new question)
-            corrected_answer, corrected_viz = generate_one_word_answer(correction)
+            # Reformulate the correction as a contextualized question
+            # If correction looks like just a word, assume it's the corrected answer
+            correction_words = correction.strip().split()
+
+            if len(correction_words) <= 2:
+                # Correction is likely just the answer, reformulate as a question
+                # Example: "Green" → "What color is green banana?"
+                if "what color" in question.lower():
+                    corrected_question = question.replace("?", f" when it is {correction}?")
+                elif "what is" in question.lower() or "who is" in question.lower():
+                    corrected_question = f"{question.rstrip('?')} (corrected: {correction})?"
+                else:
+                    corrected_question = f"{question.rstrip('?')} Assume the answer is {correction}. What is it?"
+            else:
+                # Correction is a full sentence/question, use it directly
+                corrected_question = correction
+
+            # Generate answer with correction context
+            corrected_answer, corrected_viz = generate_one_word_answer(corrected_question)
 
             # Create comparison
             comparison = f"""
-## 📊 Comparison: Original vs. Corrected
+## 📊 Comparison: Original vs. With Correction Context
 
 ### Original Question
 **Q**: {question}
-**A**: {original_answer}
+**Model's Answer**: **{original_answer}**
 
-### After Correction
-**Correction**: {correction}
-**New A**: {corrected_answer}
+### With Correction Context
+**Corrected Context**: {corrected_question}
+**Model's Answer**: **{corrected_answer}**
 
 ---
 
-### Layer-by-Layer for Original
+## 🔬 Layer-by-Layer: Original Question
+
 {original_viz}
 
 ---
 
-### Layer-by-Layer for Correction
+## 🔬 Layer-by-Layer: With Correction Context
+
 {corrected_viz}
+
+---
+
+## 💡 Interpretation
+
+The comparison shows how the model's layer-by-layer predictions differ when:
+- **Original**: Answering "{question}"
+- **With Context**: Answering with correction context "{correction}"
+
+Watch how different layers activate differently based on the context!
             """
 
             return gr.update(value=comparison, visible=True)
