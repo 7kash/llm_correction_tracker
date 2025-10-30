@@ -243,7 +243,7 @@ class LLMWithInternals:
     def generate_one_word_with_layers(
         self,
         question: str,
-        max_new_tokens: int = 3
+        max_new_tokens: int = 10
     ) -> Dict:
         """
         Generate one-word answer and show what each layer predicts (logit lens).

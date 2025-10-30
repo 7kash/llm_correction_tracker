@@ -105,8 +105,22 @@ def get_clean_words(tokens: List[str]) -> List[Tuple[str, List[int]]]:
     current_indices = []
 
     for i, token in enumerate(tokens):
+        # Skip special tokens completely before processing
+        if token in ['<s>', '</s>', '<pad>', '<unk>', '<|endoftext|>']:
+            # If we have a word in progress, save it before skipping
+            if current_word:
+                words.append((current_word, current_indices))
+                current_word = ""
+                current_indices = []
+            continue
+
         result = clean_token(token)
         if result is None:
+            # Token was filtered out - save current word if any
+            if current_word:
+                words.append((current_word, current_indices))
+                current_word = ""
+                current_indices = []
             continue
 
         cleaned, has_leading_space = result

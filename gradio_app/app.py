@@ -98,6 +98,59 @@ def generate_response(
     return result["response"], result
 
 
+def is_one_word_question(question: str) -> Tuple[bool, str]:
+    """
+    Check if question is likely answerable in one word.
+
+    Returns
+    -------
+    (is_valid, message) : tuple
+        is_valid: True if question looks one-word answerable
+        message: Explanation if not valid
+    """
+    question_lower = question.lower().strip()
+
+    # Check for common one-word question patterns
+    one_word_patterns = [
+        'what is',
+        'who is',
+        'where is',
+        'when was',
+        'when did',
+        'which',
+        'what was',
+        'capital of',
+        'color of',
+        'color is',
+        'president of',
+        'author of',
+        'founder of'
+    ]
+
+    # Check for multi-word answer indicators
+    multi_word_indicators = [
+        'why',
+        'how does',
+        'explain',
+        'describe',
+        'tell me about',
+        'what are the'
+    ]
+
+    # If contains multi-word indicators, reject
+    for indicator in multi_word_indicators:
+        if indicator in question_lower:
+            return False, f"Questions with '{indicator}' usually need more than one word. Try: 'What is the capital of Australia?'"
+
+    # If contains one-word patterns, accept
+    for pattern in one_word_patterns:
+        if pattern in question_lower:
+            return True, ""
+
+    # Default: accept but warn
+    return True, "Note: This works best with questions that have one-word answers (like 'What is X?' or 'Who is Y?')"
+
+
 def generate_one_word_answer(question: str) -> Tuple[str, str]:
     """
     Generate one-word answer and show layer-by-layer predictions (logit lens).
@@ -107,14 +160,31 @@ def generate_one_word_answer(question: str) -> Tuple[str, str]:
     answer : str
     visualization : str (markdown)
     """
+    # Validate question
+    is_valid, message = is_one_word_question(question)
+
+    if not is_valid:
+        error_viz = f"## ⚠️ Question Not Suitable\n\n{message}\n\n**Examples of good questions:**\n- What is the capital of Australia?\n- Who is the president of USA?\n- What color is the sky?\n"
+        return "❌ Please ask a one-word answerable question", error_viz
+
     model = load_model()
 
     # Generate with layer-by-layer tracking
-    result = model.generate_one_word_with_layers(question, max_new_tokens=3)
+    result = model.generate_one_word_with_layers(question, max_new_tokens=10)
+
+    # Check if answer is actually one word (3 tokens max for compound words)
+    answer_word_count = len(result["response"].split())
+    if answer_word_count > 2:
+        warning_viz = f"## ⚠️ Answer Too Long\n\nThe model generated: **{result['response']}** ({answer_word_count} words)\n\nThis visualization works best with single-word answers. Try rephrasing your question to expect a one-word answer.\n\n**Good examples:**\n- What is the capital of Australia?\n- Who discovered gravity?\n- What color is grass?"
+        return result["response"], warning_viz
 
     # Create visualization
     vocab = get_vocab_list()
     visualization = create_layer_by_layer_visualization(result, vocab)
+
+    # Add helpful note if there was a warning
+    if message:
+        visualization = f"💡 {message}\n\n---\n\n{visualization}"
 
     return result["response"], visualization
 
@@ -213,7 +283,13 @@ def reset_session():
     """Clear session history."""
     global SESSION_HISTORY
     SESSION_HISTORY = []
-    return "Session reset! Start with a new question.", None, None, None, None
+    return {
+        "response": "",
+        "summary": "_Ask a question to see how the model forms its answer through layers!_",
+        "correction_input": gr.update(visible=False, value=""),
+        "correction_btn": gr.update(visible=False),
+        "comparison": gr.update(visible=False, value="")
+    }
 
 
 # ============================================================================
@@ -224,12 +300,17 @@ def main_interface():
     with gr.Blocks(title="🧠 LLM Inference Tracker", theme=gr.themes.Soft()) as demo:
 
         gr.Markdown("""
-        # 🧠 LLM Inference Tracker
+        # 🧠 LLM Layer-by-Layer Visualization
 
-        **Track how LLMs change their responses when corrected** — with visualizations of:
-        - 🎯 **Attention Rollout**: Which words the model focuses on
-        - 📈 **Layer Trajectories**: How representations evolve through layers
-        - 🔍 **Logit Lens**: What the model "wants to say" at each layer
+        **See how a language model forms its answer through all 22 layers!**
+
+        Ask a one-word answerable question and watch the model's prediction evolve from uncertain (early layers) to confident (final layers).
+
+        ### What You'll See:
+        - 🔬 **Layer-by-Layer Predictions**: The answer at each of 22 layers with probabilities
+        - 🎯 **Top Alternatives**: Other answers the model considered
+        - 📊 **Confidence Evolution**: How certainty builds through layers
+        - 🔄 **Before/After Corrections**: Compare how corrections affect layer predictions
 
         **Model**: TinyLlama-1.1B (runs locally, ~2-5 seconds per response)
 
@@ -238,39 +319,63 @@ def main_interface():
 
         with gr.Row():
             with gr.Column(scale=2):
-                gr.Markdown("### 💬 Ask Questions & Provide Corrections")
+                gr.Markdown("### 💬 Ask a Question")
+                gr.Markdown("_Ask questions that can be answered in one word (e.g., 'What is the capital of Australia?')_")
 
                 question_input = gr.Textbox(
-                    label="Question or Correction",
+                    label="Question (expecting one-word answer)",
                     placeholder="Example: What is the capital of Australia?",
-                    lines=3
+                    lines=2
                 )
 
-                with gr.Row():
-                    generate_btn = gr.Button("🚀 Generate Response", variant="primary")
-                    reset_btn = gr.Button("🔄 Reset Session", variant="secondary")
+                generate_btn = gr.Button("🧠 Generate Answer & Show Layers", variant="primary", size="lg")
 
                 response_output = gr.Textbox(
-                    label="Model Response",
-                    lines=5,
+                    label="Model's Answer",
+                    lines=2,
                     interactive=False
                 )
 
-                turn_summary = gr.Markdown("_No turns yet. Ask a question to start!_")
+                gr.Markdown("---")
+
+                gr.Markdown("### 🔄 Provide a Correction (Optional)")
+                gr.Markdown("_If the answer is wrong, provide a correction to see how the model adapts._")
+
+                correction_input = gr.Textbox(
+                    label="Correction",
+                    placeholder="Example: Actually, the capital is Canberra, not Sydney.",
+                    lines=2,
+                    visible=False  # Only show after first answer
+                )
+
+                with gr.Row():
+                    correction_btn = gr.Button("📝 Submit Correction", variant="secondary", visible=False)
+                    reset_btn = gr.Button("🔄 Reset Session", variant="secondary")
+
+                comparison_output = gr.Markdown("", visible=False)  # For showing before/after
+
+                turn_summary = gr.Markdown("_Ask a question to see how the model forms its answer through layers!_")
 
             with gr.Column(scale=1):
                 gr.Markdown("### ℹ️ Quick Guide")
                 gr.Markdown("""
                 **How to use**:
-                1. Ask a question
-                2. Get response + internals extracted
-                3. Provide correction (optional)
-                4. Compare visualizations
+                1. Ask a one-word answerable question
+                2. See how the model forms its answer through all 22 layers
+                3. Optionally provide a correction
+                4. Compare before/after visualizations
 
-                **Tips**:
-                - Use simple questions for best results
-                - Compare before/after corrections
-                - Try: "What is the capital of Australia?" → "Actually it's Canberra"
+                **Best questions**:
+                - What is the capital of [country]?
+                - Who is the president of [country]?
+                - What color is [object]?
+                - When did [event] happen?
+
+                **Example**:
+                - Q: "What is the capital of Australia?"
+                - A: Watch layers evolve from uncertain → confident
+                - Correction: "Actually it's Canberra, not Sydney"
+                - See comparison!
                 """)
 
         gr.Markdown("---")
@@ -320,57 +425,94 @@ def main_interface():
             logit_plot = gr.Plot(label="Logit Lens")
             visualize_logit_btn = gr.Button("🔍 Show Logit Lens")
 
-        with gr.Tab("🔬 Layer-by-Layer (Logit Lens)"):
-            gr.Markdown("""
-            **Shows**: How the model's prediction forms through layers.
-
-            **NEW!** Enter a question and get a one-word answer. See what each layer predicts!
-
-            **How to read**:
-            - "Actual answer": The word the model generated, with its probability at each layer
-            - "Top alternatives": Other predictions the model considered
-            - Watch how the correct answer gains confidence through layers!
-            """)
-
-            layer_question_input = gr.Textbox(
-                label="Question (one-word answer expected)",
-                placeholder="Example: What is the capital of Australia?",
-                lines=2
-            )
-
-            layer_generate_btn = gr.Button("🧠 Generate & Show Layers", variant="primary")
-
-            layer_answer_output = gr.Textbox(
-                label="Generated Answer",
-                lines=1,
-                interactive=False
-            )
-
-            layer_viz_output = gr.Markdown("_Ask a question to see layer-by-layer predictions!_")
 
         # Event handlers
         def on_generate(question):
+            """Generate answer and show layer-by-layer visualization."""
             if not question.strip():
-                return "Please enter a question!", None, None, None, None
+                return {
+                    response_output: "Please enter a question!",
+                    turn_summary: "_Ask a question to see how the model forms its answer!_",
+                    correction_input: gr.update(visible=False),
+                    correction_btn: gr.update(visible=False),
+                    comparison_output: gr.update(visible=False)
+                }
 
-            response, internals = generate_response(question)
+            # Generate with layer-by-layer tracking
+            answer, visualization = generate_one_word_answer(question)
 
-            # Create summary
-            prev_internals = SESSION_HISTORY[-2][2] if len(SESSION_HISTORY) > 1 else None
-            summary = create_turn_summary(internals, prev_internals)
+            # Show correction input after generation
+            return {
+                response_output: answer,
+                turn_summary: visualization,
+                correction_input: gr.update(visible=True),
+                correction_btn: gr.update(visible=True),
+                comparison_output: gr.update(visible=False)
+            }
 
-            return response, summary, None, None, None
+        def on_correction(question, correction):
+            """Handle correction and show comparison."""
+            if not correction.strip():
+                return gr.update(value="Please enter a correction!", visible=True)
+
+            # Get original answer
+            original_answer, original_viz = generate_one_word_answer(question)
+
+            # Get corrected answer (treat correction as new question)
+            corrected_answer, corrected_viz = generate_one_word_answer(correction)
+
+            # Create comparison
+            comparison = f"""
+## 📊 Comparison: Original vs. Corrected
+
+### Original Question
+**Q**: {question}
+**A**: {original_answer}
+
+### After Correction
+**Correction**: {correction}
+**New A**: {corrected_answer}
+
+---
+
+### Layer-by-Layer for Original
+{original_viz}
+
+---
+
+### Layer-by-Layer for Correction
+{corrected_viz}
+            """
+
+            return gr.update(value=comparison, visible=True)
 
         generate_btn.click(
             fn=on_generate,
             inputs=[question_input],
-            outputs=[response_output, turn_summary, attention_plot, trajectory_plot, logit_plot]
+            outputs=[response_output, turn_summary, correction_input, correction_btn, comparison_output]
         )
 
+        correction_btn.click(
+            fn=on_correction,
+            inputs=[question_input, correction_input],
+            outputs=[comparison_output]
+        )
+
+        def on_reset():
+            """Reset session and UI."""
+            result = reset_session()
+            return (
+                result["response"],  # response_output
+                result["summary"],   # turn_summary
+                gr.update(visible=False, value=""),  # correction_input
+                gr.update(visible=False),  # correction_btn
+                gr.update(visible=False, value="")  # comparison_output
+            )
+
         reset_btn.click(
-            fn=reset_session,
+            fn=on_reset,
             inputs=[],
-            outputs=[turn_summary, attention_plot, trajectory_plot, logit_plot, response_output]
+            outputs=[response_output, turn_summary, correction_input, correction_btn, comparison_output]
         )
 
         visualize_attn_btn.click(
@@ -389,19 +531,6 @@ def main_interface():
             fn=visualize_logit_lens,
             inputs=[turn_selector_logit, logit_mode],
             outputs=[logit_plot]
-        )
-
-        def on_layer_generate(question):
-            if not question.strip():
-                return "Please enter a question!", "_Ask a question to see predictions!_"
-
-            answer, visualization = generate_one_word_answer(question)
-            return answer, visualization
-
-        layer_generate_btn.click(
-            fn=on_layer_generate,
-            inputs=[layer_question_input],
-            outputs=[layer_answer_output, layer_viz_output]
         )
 
     return demo
