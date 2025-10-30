@@ -421,39 +421,53 @@ def create_layer_by_layer_visualization(
     """
     parts = []
 
-    # Header
-    parts.append("# 🔬 How the Answer Forms Through Layers\n")
+    # Get user's question (filter out prompt tokens)
+    # Use user_question_tokens if available, otherwise fall back to input_tokens
+    user_tokens = internals.get("user_question_tokens", internals.get("input_tokens", []))
+    user_words = get_clean_words(user_tokens)
+    question = " ".join([word for word, _ in user_words])
 
-    # Get input question
-    input_words = get_clean_words(internals["input_tokens"])
-    question = " ".join([word for word, _ in input_words])
-
-    parts.append(f"**Question**: _{question}_\n")
-    parts.append("**Final Answer**: **{0}**\n".format(internals["response"]))
-    parts.append("---\n")
-
-    # Add "Which Words Mattered Most?" section
+    # Add "Which Words Mattered Most?" section (without header/title duplication)
     parts.append("## 📊 Which Words Mattered Most?\n")
-    parts.append("_These are the key words from your question that the model focused on:_\n\n")
+    parts.append("_Key words from your question that the model focused on:_\n\n")
 
-    if input_words:
-        # Show all input words with emphasis on likely important ones
+    if user_words:
+        # Calculate importance scores for each word
         # Question words, nouns, and specific entities typically matter most
         important_indicators = ['what', 'who', 'where', 'when', 'which', 'how', 'capital', 'color', 'president']
 
-        for word, indices in input_words:
+        word_scores = []
+        for word, indices in user_words:
             word_lower = word.lower()
             # Check if this word is likely important
             is_important = any(indicator in word_lower for indicator in important_indicators)
 
-            if is_important or len(word) > 4:  # Longer words often more meaningful
-                # Create a simple bar (we don't have real attention scores in this mode)
-                # Longer/important words get longer bars as placeholder
-                bar_length = min(int(len(word) / 2) + (5 if is_important else 0), 15)
-                bar = "█" * bar_length
-                parts.append(f"**{word}** {bar}\n")
+            # Calculate score (0-100)
+            base_score = 30  # Minimum score for any word
+            importance_bonus = 50 if is_important else 0
+            length_bonus = min(len(word) * 2, 20)  # Longer words get more points
 
-        parts.append("\n💡 _Note: Full attention analysis would show exact importance scores from the model's attention mechanism._\n")
+            score = base_score + importance_bonus + length_bonus
+            score = min(score, 100)  # Cap at 100
+
+            word_scores.append((word, score))
+
+        # Normalize scores to make the max = 100
+        if word_scores:
+            max_score = max(score for _, score in word_scores)
+            if max_score > 0:
+                word_scores = [(word, int((score / max_score) * 100)) for word, score in word_scores]
+
+        # Display words with bars and percentages
+        for word, score in word_scores:
+            if len(word) <= 3 and score < 40:  # Skip short unimportant words
+                continue
+
+            bar_length = max(1, int((score / 100) * 15))  # Scale to 15 chars max
+            bar = "█" * bar_length
+            parts.append(f"**{word}** {bar} {score}%\n")
+
+        parts.append("\n💡 _Scores based on word type and length (full attention analysis would show exact attention weights)_\n")
     else:
         parts.append("_No words could be extracted from the input._\n")
 

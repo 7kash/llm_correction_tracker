@@ -396,10 +396,16 @@ class LLMWithInternals:
 
         input_tokens = self.tokenizer.convert_ids_to_tokens(inputs.input_ids[0])
 
+        # Also tokenize just the user's question to identify which tokens are user's
+        user_question_tokens = self.tokenizer.convert_ids_to_tokens(
+            self.tokenizer(question, add_special_tokens=False).input_ids
+        )
+
         return {
             "response": response_text.strip(),
             "layer_predictions": layer_predictions,
             "input_tokens": input_tokens,
+            "user_question_tokens": user_question_tokens,  # NEW: Just user's question
             "num_layers": len(layer_predictions)
         }
 

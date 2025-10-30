@@ -446,12 +446,13 @@ def main_interface():
         original_viz_cache = {}
 
         def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
-            """Create side-by-side comparison view."""
+            """Create side-by-side comparison view using table layout."""
             return f"""
 ## 📊 Comparison: Without Correction vs. With Correction
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-<div style="border: 2px solid #3b82f6; padding: 15px; border-radius: 8px;">
+<table style="width: 100%; border-collapse: collapse;">
+<tr>
+<td style="width: 50%; vertical-align: top; padding: 15px; border: 3px solid #3b82f6; border-radius: 8px;">
 
 ### 🔵 Without Correction
 **Question**: {question}
@@ -459,8 +460,8 @@ def main_interface():
 
 {original_viz}
 
-</div>
-<div style="border: 2px solid #ef4444; padding: 15px; border-radius: 8px;">
+</td>
+<td style="width: 50%; vertical-align: top; padding: 15px; border: 3px solid #ef4444; border-radius: 8px;">
 
 ### 🔴 With Correction Context
 **Context Given**: "{correction_context}"
@@ -469,16 +470,18 @@ def main_interface():
 
 {corrected_viz}
 
-</div>
-</div>
+</td>
+</tr>
+</table>
 
 ---
 
 ## 💡 What Changed?
 
-**Left (Original)**: Model answered based purely on training data → **{original_answer}**
-
-**Right (Corrected)**: Model was told "{correction_context}" then asked same question → **{corrected_answer}**
+| Original (🔵) | With Correction (🔴) |
+|--------------|---------------------|
+| Answer: **{original_answer}** | Answer: **{corrected_answer}** |
+| Based on training data only | Told: "{correction_context}" |
 
 ### Internal Model Changes:
 1. **Attention patterns**: "That's wrong" tokens attend to the previous answer
@@ -486,7 +489,7 @@ def main_interface():
 3. **Correction patterns**: Apology and factual correction pathways light up
 4. **Layer evolution**: Watch how predictions change through layers when model "knows" it was wrong
 
-The layer-by-layer visualizations show exactly how these internal changes manifest!
+The layer-by-layer visualizations above show exactly how these internal changes manifest!
             """
 
         def on_generate(question):
@@ -530,9 +533,6 @@ The layer-by-layer visualizations show exactly how these internal changes manife
             # This activates error/disagreement patterns
             correction_context = f"That's wrong. Try again."
 
-            # Show loading indicator
-            status_msg = "🔄 Generating with correction context..."
-
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
 
@@ -542,12 +542,18 @@ The layer-by-layer visualizations show exactly how these internal changes manife
                 correction_context, corrected_answer, corrected_viz
             )
 
-            return gr.update(value=comparison, visible=True), gr.update(visible=False)
+            return (
+                gr.update(visible=False),  # Hide turn_summary (original result)
+                gr.update(value=comparison, visible=True)  # Show comparison
+            )
 
         def on_correction(question, correction):
             """Handle manual correction with specific answer."""
             if not correction.strip():
-                return gr.update(value="Please enter a correction!", visible=True), gr.update(visible=False)
+                return (
+                    gr.update(visible=True),  # Keep turn_summary visible
+                    gr.update(value="⚠️ Please enter a correction!", visible=True)  # Show error
+                )
 
             # Get original answer from cache (don't re-generate!)
             original_answer = original_answer_cache.get(question, "Unknown")
@@ -575,7 +581,10 @@ The layer-by-layer visualizations show exactly how these internal changes manife
                 correction_context, corrected_answer, corrected_viz
             )
 
-            return gr.update(value=comparison, visible=True), gr.update(visible=False)
+            return (
+                gr.update(visible=False),  # Hide turn_summary (original result)
+                gr.update(value=comparison, visible=True)  # Show comparison
+            )
 
         generate_btn.click(
             fn=on_generate,
@@ -586,13 +595,13 @@ The layer-by-layer visualizations show exactly how these internal changes manife
         wrong_btn.click(
             fn=on_wrong_clicked,
             inputs=[question_input],
-            outputs=[comparison_output, correction_status]
+            outputs=[turn_summary, comparison_output]
         )
 
         correction_btn.click(
             fn=on_correction,
             inputs=[question_input, correction_input],
-            outputs=[comparison_output, correction_status]
+            outputs=[turn_summary, comparison_output]
         )
 
         def on_reset():
