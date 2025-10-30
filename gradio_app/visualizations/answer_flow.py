@@ -482,23 +482,27 @@ def create_layer_by_layer_visualization(
                 word_attention[word] = total_attention
 
         if word_attention:
-            # Sort and get top 8
+            # Sort by attention (highest first)
             sorted_words = sorted(word_attention.items(), key=lambda x: x[1], reverse=True)[:8]
-            max_attention = sorted_words[0][1]
 
-            # Create minimalistic HTML chart
+            # Create minimalistic HTML chart with REAL percentages
             parts.append('<div style="margin: 1.5rem 0;">\n')
-            for word, attention in sorted_words:
-                pct = int((attention / max_attention) * 100)
+            for word, attention_pct in sorted_words:
+                # Use real percentage (attention_percentages already sum to 100)
+                # Display percentage rounded to 1 decimal
+                display_pct = round(attention_pct, 1)
+                # Bar width is the actual percentage
+                bar_width = min(100, int(attention_pct))
+
                 parts.append(f'<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">\n')
                 parts.append(f'  <span style="min-width: 100px; text-align: right; font-size: 0.875rem; color: #374151; font-weight: 500;">{word}</span>\n')
                 parts.append(f'  <div style="flex: 1; background: #E5E7EB; height: 6px; border-radius: 3px; overflow: hidden;">\n')
-                parts.append(f'    <div style="width: {pct}%; height: 100%; background: #111827;"></div>\n')
+                parts.append(f'    <div style="width: {bar_width}%; height: 100%; background: #111827;"></div>\n')
                 parts.append(f'  </div>\n')
-                parts.append(f'  <span style="min-width: 45px; font-size: 0.75rem; color: #6B7280;">{pct}%</span>\n')
+                parts.append(f'  <span style="min-width: 45px; font-size: 0.75rem; color: #6B7280;">{display_pct}%</span>\n')
                 parts.append(f'</div>\n')
             parts.append('</div>\n\n')
-            parts.append("_Real attention scores from the model's final layer_\n\n")
+            parts.append("_Real attention percentages from the model's final layer (sum to 100%)_\n\n")
         else:
             parts.append("_No significant words found._\n\n")
     else:
@@ -520,25 +524,25 @@ def create_layer_by_layer_visualization(
         # Create softmax visualization (chart)
         parts.append("### Top Token Probabilities\n\n")
 
-        max_prob = max(item["probability"] for item in softmax_example)
-
         parts.append('<div style="margin: 1.5rem 0;">\n')
         for item in softmax_example:
             token = item["token"]
             logit = item["logit"]
             prob = item["probability"]
-            pct = int((prob / max_prob) * 100)
+            # Use REAL probability percentage (not normalized)
+            prob_pct = prob * 100
+            bar_width = min(100, int(prob_pct))
 
             parts.append(f'<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; padding: 0.5rem 0;">\n')
             parts.append(f'  <span style="min-width: 90px; text-align: right; font-size: 0.875rem; color: #374151; font-weight: 500;">{token}</span>\n')
             parts.append(f'  <span style="min-width: 70px; font-size: 0.75rem; color: #6B7280;">logit: {logit:+.2f}</span>\n')
             parts.append(f'  <div style="flex: 1; background: #E5E7EB; height: 4px; border-radius: 2px; overflow: hidden;">\n')
-            parts.append(f'    <div style="width: {pct}%; height: 100%; background: #111827;"></div>\n')
+            parts.append(f'    <div style="width: {bar_width}%; height: 100%; background: #111827;"></div>\n')
             parts.append(f'  </div>\n')
-            parts.append(f'  <span style="min-width: 55px; font-size: 0.75rem; color: #374151; font-weight: 500;">{prob*100:.1f}%</span>\n')
+            parts.append(f'  <span style="min-width: 55px; font-size: 0.75rem; color: #374151; font-weight: 500;">{prob_pct:.1f}%</span>\n')
             parts.append(f'</div>\n')
         parts.append('</div>\n\n')
-        parts.append("_Softmax converts raw scores into probabilities that sum to 100%_\n\n")
+        parts.append("_Real softmax probabilities from the model (these top 5 tokens sum to less than 100% as other tokens have remaining probability)_\n\n")
         parts.append("---\n\n")
 
     # Theoretical explanation for logit lens
