@@ -431,33 +431,50 @@ def create_layer_by_layer_visualization(
     # Create whitelist: words from question, correction answer, and "wrong"
     allowed_words = set()
 
-    # Add words from question
+    # Add ALL words from question (no length restriction, just skip empty)
     if question:
-        question_words = question.lower().replace("?", " ").replace(".", " ").split()
-        allowed_words.update(word.strip() for word in question_words if len(word.strip()) > 1)
+        question_words = question.lower().replace("?", " ").replace(".", " ").replace(",", " ").split()
+        for word in question_words:
+            word = word.strip()
+            if word:  # Add any non-empty word
+                allowed_words.add(word)
 
     # Add words from correction context
     if context:
         # Always include "wrong"
         allowed_words.add("wrong")
 
-        # Extract the actual correction answer if present
-        # Format: "That's wrong. The correct answer is: [answer]."
+        # Extract the actual correction answer
+        # Try multiple formats
         if "correct answer is:" in context.lower():
-            # Extract everything after "correct answer is:"
+            # Format: "That's wrong. The correct answer is: [answer]."
             parts = context.lower().split("correct answer is:")
             if len(parts) > 1:
-                correction_answer = parts[1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "")
+                correction_answer = parts[1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "").replace(":", "")
                 correction_words = correction_answer.split()
-                allowed_words.update(word.strip() for word in correction_words if len(word.strip()) > 1)
-        # Also try to extract from simpler format
-        elif ":" in context:
-            # Extract everything after last colon
-            parts = context.split(":")
+                for word in correction_words:
+                    word = word.strip()
+                    if word:
+                        allowed_words.add(word)
+        elif "correct answer" in context.lower():
+            # Might be phrased differently
+            parts = context.lower().split("correct answer")
             if len(parts) > 1:
-                correction_text = parts[-1].strip().replace(".", "").replace(",", "").replace('"', "").replace("'", "")
-                correction_words = correction_text.split()
-                allowed_words.update(word.strip() for word in correction_words if len(word.strip()) > 1)
+                # Get everything after "correct answer"
+                rest = parts[1].replace("is", "").replace(":", "").replace(".", "").replace(",", "").replace('"', "").replace("'", "").strip()
+                for word in rest.split():
+                    word = word.strip()
+                    if word:
+                        allowed_words.add(word)
+        else:
+            # Simple case: just the correction word given directly
+            # Clean and add all words from context
+            context_cleaned = context.replace(".", "").replace(",", "").replace('"', "").replace("'", "").replace(":", "")
+            for word in context_cleaned.split():
+                word = word.strip().lower()
+                # Skip common filler words but keep content words
+                if word and word not in ['the', 'is', 'a', 'an', 'that', 'this', 'try', 'again', 'please']:
+                    allowed_words.add(word)
 
     # Get clean words from all input
     all_words = get_clean_words(input_tokens)
@@ -563,6 +580,18 @@ def create_layer_by_layer_visualization(
         parts.append("_Real softmax probabilities from the model (these top 5 tokens sum to less than 100% as other tokens have remaining probability)_\n\n")
         parts.append("---\n\n")
 
+    # Theoretical explanation for final answer - MOVED BEFORE layers
+    parts.append("## 📚 Theory: How the Final Answer is Selected\n")
+    parts.append("_The model generates text token-by-token. At each position, the final layer produces a ")
+    parts.append("**probability distribution** over all possible tokens. The model selects the token with highest probability ")
+    parts.append("(greedy decoding). This process repeats until a stop condition is met._\n\n")
+    parts.append("---\n\n")
+
+    parts.append("## ✅ Final Answer\n\n")
+    parts.append(f"**{internals['response']}**\n\n")
+    parts.append("_This is what the final layer predicted with highest confidence!_\n\n")
+    parts.append("---\n\n")
+
     # Theoretical explanation for logit lens
     parts.append("## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)\n")
     parts.append("_The **logit lens** technique reveals what the model \"thinks\" at each layer. ")
@@ -575,13 +604,9 @@ def create_layer_by_layer_visualization(
 
     layer_predictions = internals["layer_predictions"]
 
-    # Show every 3rd layer to avoid clutter (or all if few layers)
+    # Show ALL layers so users can see individual layer progression
     num_layers = len(layer_predictions)
-    if num_layers > 15:
-        # Show layers: 0, 3, 6, 9, ..., last
-        layer_indices = list(range(0, num_layers, 3)) + [num_layers - 1]
-    else:
-        layer_indices = range(num_layers)
+    layer_indices = range(num_layers)
 
     for layer_idx in layer_indices:
         if layer_idx >= len(layer_predictions):
@@ -632,19 +657,6 @@ def create_layer_by_layer_visualization(
                 parts.append(f"- `{alt['token']}` ({alt['prob']*100:.1f}%)\n")
 
         parts.append("\n")
-
-    parts.append("---\n\n")
-
-    # Theoretical explanation for final answer
-    parts.append("## 📚 Theory: How the Final Answer is Selected\n")
-    parts.append("_The model generates text token-by-token. At each position, the final layer produces a ")
-    parts.append("**probability distribution** over all possible tokens. The model selects the token with highest probability ")
-    parts.append("(greedy decoding). This process repeats until a stop condition is met._\n\n")
-    parts.append("---\n\n")
-
-    parts.append("## ✅ Final Answer\n\n")
-    parts.append(f"**{internals['response']}**\n\n")
-    parts.append("_This is what the final layer predicted with highest confidence!_\n")
 
     return "\n".join(parts)
 

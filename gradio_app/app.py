@@ -574,7 +574,8 @@ def main_interface():
 
 ## Detailed Comparison
 
-<table style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0;">
+<div style="width: 100%; overflow-x: auto;">
+<table style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0; table-layout: fixed;">
 <tr>
 <th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
 Without Correction
@@ -590,8 +591,8 @@ With Correction
             theory_sections = [
                 '## 📚 Theory: Attention Mechanism',
                 '## 📚 Theory: Softmax Transformation',
-                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)',
-                '## 📚 Theory: How the Final Answer is Selected'
+                '## 📚 Theory: How the Final Answer is Selected',
+                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)'
             ]
 
             for theory_key in theory_sections:
@@ -600,7 +601,7 @@ With Correction
                     if theory_content:
                         html += f"""
 <tr>
-<td colspan="2" style="padding: 1.5rem; border: 1px solid #E5E7EB; background: #FAFAFA;">
+<td colspan="2" style="padding: 1.5rem; border: 1px solid #E5E7EB; background: #FAFAFA; word-wrap: break-word; overflow-wrap: break-word;">
 {theory_content}
 </td>
 </tr>
@@ -610,8 +611,8 @@ With Correction
             data_section_pairs = [
                 ('### Attention Distribution', 'Attention'),
                 ('### Top Token Probabilities', 'Softmax'),
-                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions'),
-                ('## ✅ Final Answer', 'Final Answer')
+                ('## ✅ Final Answer', 'Final Answer'),
+                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions')
             ]
 
             for section_key, label in data_section_pairs:
@@ -632,10 +633,10 @@ With Correction
                 if orig_section or corr_section:
                     html += f"""
 <tr>
-<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white;">
+<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
 {orig_section or f"_{label} not available_"}
 </td>
-<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white;">
+<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
 {corr_section or f"_{label} not available_"}
 </td>
 </tr>
@@ -643,6 +644,7 @@ With Correction
 
             html += """
 </table>
+</div>
 """
 
             return html
@@ -670,8 +672,8 @@ With Correction
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Use "That's wrong" without providing correct answer
-            correction_context = "That's wrong. Try again."
+            # Include previous answer in context so model knows what was wrong
+            correction_context = f"Your previous answer was '{original_answer}'. That's wrong. Try again."
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
@@ -696,11 +698,11 @@ With Correction
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Build context
+            # Build context with previous answer
             if len(correction.split()) <= 2:
-                correction_context = f"That's wrong. The correct answer is: {correction}."
+                correction_context = f"Your previous answer was '{original_answer}'. That's wrong. The correct answer is: {correction}."
             else:
-                correction_context = f"That's wrong. {correction}"
+                correction_context = f"Your previous answer was '{original_answer}'. That's wrong. {correction}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
