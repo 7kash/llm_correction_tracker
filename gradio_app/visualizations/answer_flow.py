@@ -425,39 +425,48 @@ def create_layer_by_layer_visualization(
     input_tokens = internals.get("input_tokens", [])
     user_tokens = internals.get("user_question_tokens", [])
     attention_percentages = internals.get("attention_percentages", None)
+    question = internals.get("question", "")
+    context = internals.get("context", "")
 
-    # Filter tokens - only show actual question/context words
-    # Remove prompt wrapper words like "Answer", "Question", "only", "word"
-    prompt_wrapper_words = [
-        'answer', 'question', 'only', 'word', 'one', 'in', 'context',
-        'given', 'that', 'the', 'is', 'a', 'an', 'to', 'of', ':', '.',
-        'correct', 'try', 'again', 'now'
-    ]
+    # Create whitelist: only words from actual question or context
+    allowed_words = set()
 
-    # Get clean words from all input (includes context if present)
+    # Add words from question
+    if question:
+        question_words = question.lower().replace("?", " ").replace(".", " ").split()
+        allowed_words.update(word.strip() for word in question_words if len(word.strip()) > 1)
+
+    # Add words from context (correction)
+    if context:
+        context_words = context.lower().replace(":", " ").replace(".", " ").replace('"', " ").split()
+        allowed_words.update(word.strip() for word in context_words if len(word.strip()) > 1)
+
+    # Get clean words from all input
     all_words = get_clean_words(input_tokens)
 
-    # Filter to only meaningful content words
+    # Filter to only words in the whitelist (actual question/context)
     filtered_words = []
     for word, token_indices in all_words:
         word_lower = word.lower().strip()
-        # Skip if it's a prompt wrapper word or too short
-        if word_lower in prompt_wrapper_words or len(word_lower) <= 1:
-            continue
-        # Skip if it's just punctuation
+
+        # Skip punctuation-only
         if all(c in '.,!?;:\'"()-' for c in word):
             continue
-        filtered_words.append((word, token_indices))
 
-    # Theoretical explanation
-    parts.append("## 📚 Theory: Attention Mechanism\n")
-    parts.append("_The model uses **attention** to decide which input words are most relevant for generating the answer. ")
-    parts.append("Each word gets an attention score (0-100%) showing how much the model \"focused\" on it. ")
+        # Only include if in whitelist
+        if word_lower in allowed_words:
+            filtered_words.append((word, token_indices))
+
+    # Attention Section - Theory then Data
+    parts.append("## 📚 Theory: Attention Mechanism\n\n")
+    parts.append("_The model uses **attention** to decide which input words are most relevant for generating the answer._\n\n")
+    parts.append("**Mathematical Formula:**\n\n")
+    parts.append("$$\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right) V$$\n\n")
+    parts.append("_Each word gets an attention score (0-100%) showing how much the model \"focused\" on it. ")
     parts.append("Higher scores mean the word had more influence on the answer._\n\n")
-    parts.append("---\n\n")
 
-    # Add "Which Words Mattered Most?" section
-    parts.append("## 📊 Which Words Mattered Most?\n\n")
+    # Add attention visualization (chart)
+    parts.append("### Attention Distribution\n\n")
 
     if filtered_words and attention_percentages:
         # Map tokens to words and sum their attention
@@ -469,69 +478,67 @@ def create_layer_by_layer_visualization(
                 if idx < len(attention_percentages):
                     total_attention += attention_percentages[idx]
 
-            if total_attention > 0:  # Only include words with attention
+            if total_attention > 0:
                 word_attention[word] = total_attention
 
         if word_attention:
-            # Sort by attention (highest first)
-            sorted_words = sorted(word_attention.items(), key=lambda x: x[1], reverse=True)
-
-            # Find max for normalization
+            # Sort and get top 8
+            sorted_words = sorted(word_attention.items(), key=lambda x: x[1], reverse=True)[:8]
             max_attention = sorted_words[0][1]
 
-            # Display words with bars and percentages (real attention!)
-            for word, attention in sorted_words[:10]:  # Show top 10
-                # Normalize to 0-100 for display
-                normalized = int((attention / max_attention) * 100) if max_attention > 0 else 0
-
-                bar_length = max(1, int((normalized / 100) * 15))  # Scale to 15 chars max
-                bar = "█" * bar_length
-
-                parts.append(f"**{word}** {bar} {normalized}%\n")
-
-            parts.append("\n💡 _These are REAL attention scores from the model's final layer!_\n")
+            # Create minimalistic HTML chart
+            parts.append('<div style="margin: 1.5rem 0;">\n')
+            for word, attention in sorted_words:
+                pct = int((attention / max_attention) * 100)
+                parts.append(f'<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">\n')
+                parts.append(f'  <span style="min-width: 100px; text-align: right; font-size: 0.875rem; color: #374151; font-weight: 500;">{word}</span>\n')
+                parts.append(f'  <div style="flex: 1; background: #E5E7EB; height: 6px; border-radius: 3px; overflow: hidden;">\n')
+                parts.append(f'    <div style="width: {pct}%; height: 100%; background: #111827;"></div>\n')
+                parts.append(f'  </div>\n')
+                parts.append(f'  <span style="min-width: 45px; font-size: 0.75rem; color: #6B7280;">{pct}%</span>\n')
+                parts.append(f'</div>\n')
+            parts.append('</div>\n\n')
+            parts.append("_Real attention scores from the model's final layer_\n\n")
         else:
-            parts.append("_No significant words found._\n")
+            parts.append("_No significant words found._\n\n")
     else:
-        parts.append("_Attention data not available._\n")
+        parts.append("_Attention data not available._\n\n")
 
     parts.append("---\n\n")
 
-    # Softmax Section
+    # Softmax Section - Theory then Data
     softmax_example = internals.get("softmax_example", None)
 
     if softmax_example:
-        parts.append("## 📚 Theory: Softmax - From Scores to Probabilities\n")
+        parts.append("## 📚 Theory: Softmax Transformation\n\n")
         parts.append("_The model outputs **logits** (raw scores) for each possible next token. ")
-        parts.append("These scores can be any number (positive or negative). ")
-        parts.append("**Softmax** transforms these scores into probabilities (0-100%) that sum to 100%. ")
-        parts.append("Larger logits become larger probabilities, but the exponential amplifies differences._\n\n")
-        parts.append("---\n\n")
+        parts.append("Softmax transforms these into probabilities (0-100%) that sum to 100%._\n\n")
+        parts.append("**Mathematical Formula:**\n\n")
+        parts.append("$$\\text{softmax}(z_i) = \\frac{e^{z_i}}{\\sum_j e^{z_j}}$$\n\n")
+        parts.append("_The exponential amplifies differences between scores._\n\n")
 
-        parts.append("## 🔢 Softmax Transformation Example (Final Layer)\n\n")
-        parts.append("Here are the **top 5 tokens** the model considered for the answer:\n\n")
+        # Create softmax visualization (chart)
+        parts.append("### Top Token Probabilities\n\n")
 
-        # Create a table showing the transformation
-        parts.append("| Token | Raw Logit | → | Probability |\n")
-        parts.append("|-------|-----------|---|-------------|\n")
+        max_prob = max(item["probability"] for item in softmax_example)
 
+        parts.append('<div style="margin: 1.5rem 0;">\n')
         for item in softmax_example:
             token = item["token"]
             logit = item["logit"]
             prob = item["probability"]
+            pct = int((prob / max_prob) * 100)
 
-            # Format nicely
-            token_display = token if len(token) <= 15 else token[:12] + "..."
-            logit_str = f"{logit:+.2f}"
-            prob_str = f"{prob*100:.2f}%"
-
-            # Add bar visualization for probability
-            bar_length = max(1, int(prob * 20))  # Scale to 20 chars max
-            bar = "█" * bar_length
-
-            parts.append(f"| **{token_display}** | {logit_str} | → | {prob_str} {bar} |\n")
-
-        parts.append("\n💡 _Notice how softmax converts the raw scores into percentages that sum to ~100%!_\n")
+            parts.append(f'<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; padding: 0.5rem 0;">\n')
+            parts.append(f'  <span style="min-width: 90px; text-align: right; font-size: 0.875rem; color: #374151; font-weight: 500;">{token}</span>\n')
+            parts.append(f'  <span style="min-width: 70px; font-size: 0.75rem; color: #6B7280;">logit: {logit:+.2f}</span>\n')
+            parts.append(f'  <div style="flex: 1; background: #E5E7EB; height: 4px; border-radius: 2px; overflow: hidden;">\n')
+            parts.append(f'    <div style="width: {pct}%; height: 100%; background: #111827;"></div>\n')
+            parts.append(f'  </div>\n')
+            parts.append(f'  <span style="min-width: 55px; font-size: 0.75rem; color: #374151; font-weight: 500;">{prob*100:.1f}%</span>\n')
+            parts.append(f'</div>\n')
+        parts.append('</div>\n\n')
+        parts.append("_Softmax converts raw scores into probabilities that sum to 100%_\n\n")
         parts.append("---\n\n")
 
     # Theoretical explanation for logit lens

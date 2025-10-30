@@ -406,7 +406,12 @@ class LLMWithInternals:
                     token_id = top_logit_ids[i].item()
                     logit_val = float(top_logits_vals[i].item())
                     prob_val = float(probs[token_id].item())
-                    token_str = self.tokenizer.decode([token_id])
+                    # Decode with proper cleanup
+                    token_str = self.tokenizer.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+
+                    # If empty after decode, use raw token representation
+                    if not token_str.strip():
+                        token_str = self.tokenizer.convert_ids_to_tokens([token_id])[0]
 
                     softmax_data.append({
                         "token": token_str.strip(),
@@ -453,7 +458,9 @@ class LLMWithInternals:
             "user_question_tokens": user_question_tokens,  # Just user's question
             "attention_percentages": attention_percentages,  # NEW: Real attention weights
             "softmax_example": softmax_example,  # Softmax transformation data
-            "num_layers": len(layer_predictions)
+            "num_layers": len(layer_predictions),
+            "question": question,  # Original question for filtering
+            "context": context  # Context for filtering
         }
 
     def _process_attentions_from_forward(
