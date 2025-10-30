@@ -650,13 +650,15 @@ The layer-by-layer visualizations above show exactly how these internal changes 
         wrong_btn.click(
             fn=on_wrong_clicked,
             inputs=[question_input],
-            outputs=[turn_summary, comparison_output]
+            outputs=[turn_summary, comparison_output],
+            show_progress="full"  # Show loading indicator
         )
 
         correction_btn.click(
             fn=on_correction,
             inputs=[question_input, correction_input],
-            outputs=[turn_summary, comparison_output]
+            outputs=[turn_summary, comparison_output],
+            show_progress="full"  # Show loading indicator
         )
 
         def on_reset():
