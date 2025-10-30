@@ -421,61 +421,71 @@ def create_layer_by_layer_visualization(
     """
     parts = []
 
-    # Get user's question (filter out prompt tokens)
-    # Use user_question_tokens if available, otherwise fall back to input_tokens
-    user_tokens = internals.get("user_question_tokens", internals.get("input_tokens", []))
-    user_words = get_clean_words(user_tokens)
-    question = " ".join([word for word, _ in user_words])
+    # Get all input tokens and attention percentages
+    input_tokens = internals.get("input_tokens", [])
+    user_tokens = internals.get("user_question_tokens", [])
+    attention_percentages = internals.get("attention_percentages", None)
 
-    # Add "Which Words Mattered Most?" section (without header/title duplication)
-    parts.append("## 📊 Which Words Mattered Most?\n")
-    parts.append("_Key words from your question that the model focused on:_\n\n")
+    # Get clean words from all input (includes context if present)
+    all_words = get_clean_words(input_tokens)
 
-    if user_words:
-        # Calculate importance scores for each word
-        # Question words, nouns, and specific entities typically matter most
-        important_indicators = ['what', 'who', 'where', 'when', 'which', 'how', 'capital', 'color', 'president']
+    # Theoretical explanation
+    parts.append("## 📚 Theory: Attention Mechanism\n")
+    parts.append("_The model uses **attention** to decide which input words are most relevant for generating the answer. ")
+    parts.append("Each word gets an attention score (0-100%) showing how much the model \"focused\" on it. ")
+    parts.append("Higher scores mean the word had more influence on the answer._\n\n")
+    parts.append("---\n\n")
 
-        word_scores = []
-        for word, indices in user_words:
-            word_lower = word.lower()
-            # Check if this word is likely important
-            is_important = any(indicator in word_lower for indicator in important_indicators)
+    # Add "Which Words Mattered Most?" section
+    parts.append("## 📊 Which Words Mattered Most?\n\n")
 
-            # Calculate score (0-100)
-            base_score = 30  # Minimum score for any word
-            importance_bonus = 50 if is_important else 0
-            length_bonus = min(len(word) * 2, 20)  # Longer words get more points
+    if all_words and attention_percentages:
+        # Map tokens to words and sum their attention
+        word_attention = {}
+        token_idx = 0
 
-            score = base_score + importance_bonus + length_bonus
-            score = min(score, 100)  # Cap at 100
+        for word, token_indices in all_words:
+            total_attention = 0.0
+            for idx in token_indices:
+                if idx < len(attention_percentages):
+                    total_attention += attention_percentages[idx]
 
-            word_scores.append((word, score))
+            word_attention[word] = total_attention
 
-        # Normalize scores to make the max = 100
-        if word_scores:
-            max_score = max(score for _, score in word_scores)
-            if max_score > 0:
-                word_scores = [(word, int((score / max_score) * 100)) for word, score in word_scores]
+        # Sort by attention (highest first)
+        sorted_words = sorted(word_attention.items(), key=lambda x: x[1], reverse=True)
 
-        # Display words with bars and percentages
-        for word, score in word_scores:
-            if len(word) <= 3 and score < 40:  # Skip short unimportant words
+        # Find max for normalization
+        max_attention = sorted_words[0][1] if sorted_words else 1.0
+
+        # Display words with bars and percentages (real attention!)
+        for word, attention in sorted_words:
+            if attention < 0.5:  # Skip very low attention words
                 continue
 
-            bar_length = max(1, int((score / 100) * 15))  # Scale to 15 chars max
+            # Normalize to 0-100 for display
+            normalized = int((attention / max_attention) * 100) if max_attention > 0 else 0
+
+            bar_length = max(1, int((normalized / 100) * 15))  # Scale to 15 chars max
             bar = "█" * bar_length
-            parts.append(f"**{word}** {bar} {score}%\n")
 
-        parts.append("\n💡 _Scores based on word type and length (full attention analysis would show exact attention weights)_\n")
+            parts.append(f"**{word}** {bar} {normalized}%\n")
+
+        parts.append("\n💡 _These are REAL attention scores from the model's final layer!_\n")
     else:
-        parts.append("_No words could be extracted from the input._\n")
+        parts.append("_Attention data not available._\n")
 
-    parts.append("---\n")
+    parts.append("---\n\n")
 
-    parts.append("## 🎯 Layer-by-Layer Predictions\n")
-    parts.append("_At each layer, the model predicts what the answer should be._\n")
-    parts.append("_Watch how the prediction evolves from early layers (uncertain) to final layers (confident):_\n\n")
+    # Theoretical explanation for logit lens
+    parts.append("## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)\n")
+    parts.append("_The **logit lens** technique reveals what the model \"thinks\" at each layer. ")
+    parts.append("Normally, only the final layer produces the answer. ")
+    parts.append("But we can apply the final prediction head to ANY layer to see what it would predict at that point. ")
+    parts.append("Early layers are uncertain (low confidence), while later layers refine and become confident._\n\n")
+    parts.append("---\n\n")
+
+    parts.append("## 🎯 Layer-by-Layer Predictions\n\n")
 
     layer_predictions = internals["layer_predictions"]
 
@@ -537,10 +547,18 @@ def create_layer_by_layer_visualization(
 
         parts.append("\n")
 
-    parts.append("---\n")
-    parts.append("## ✅ Final Answer\n")
-    parts.append(f"**{internals['response']}**\n")
-    parts.append("_The final layer's prediction becomes the model's answer._\n")
+    parts.append("---\n\n")
+
+    # Theoretical explanation for final answer
+    parts.append("## 📚 Theory: How the Final Answer is Selected\n")
+    parts.append("_The model generates text token-by-token. At each position, the final layer produces a ")
+    parts.append("**probability distribution** over all possible tokens. The model selects the token with highest probability ")
+    parts.append("(greedy decoding). This process repeats until a stop condition is met._\n\n")
+    parts.append("---\n\n")
+
+    parts.append("## ✅ Final Answer\n\n")
+    parts.append(f"**{internals['response']}**\n\n")
+    parts.append("_This is what the final layer predicted with highest confidence!_\n")
 
     return "\n".join(parts)
 

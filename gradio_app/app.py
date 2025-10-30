@@ -446,32 +446,85 @@ def main_interface():
         original_viz_cache = {}
 
         def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
-            """Create side-by-side comparison view using table layout."""
-            return f"""
+            """Create side-by-side comparison view with horizontally aligned sections."""
+
+            # Split visualizations into sections for alignment
+            def split_sections(viz_text):
+                sections = {}
+                current_section = None
+                current_content = []
+
+                for line in viz_text.split('\n'):
+                    if line.strip().startswith('## '):
+                        if current_section:
+                            sections[current_section] = '\n'.join(current_content)
+                        current_section = line.strip()
+                        current_content = [line]
+                    elif current_content:
+                        current_content.append(line)
+
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+
+                return sections
+
+            orig_sections = split_sections(original_viz)
+            corr_sections = split_sections(corrected_viz)
+
+            # Build aligned comparison
+            html = """
 ## 📊 Comparison: Without Correction vs. With Correction
 
-<table style="width: 100%; border-collapse: collapse;">
+<table style="width: 100%; border-collapse: collapse; table-layout: fixed;">
 <tr>
-<td style="width: 50%; vertical-align: top; padding: 15px; border: 3px solid #3b82f6; border-radius: 8px;">
+<th style="width: 50%; padding: 10px; background: #3b82f6; color: white; border: 2px solid #2563eb;">
+🔵 Without Correction
+</th>
+<th style="width: 50%; padding: 10px; background: #ef4444; color: white; border: 2px solid #dc2626;">
+🔴 With Correction Context
+</th>
+</tr>
 
-### 🔵 Without Correction
-**Question**: {question}
-**Model's Answer**: **{original_answer}**
+<tr>
+<td style="padding: 10px; border: 2px solid #3b82f6; vertical-align: top;">
 
-{original_viz}
+**Question**: """ + question + """
+**Model's Answer**: **""" + original_answer + """**
 
 </td>
-<td style="width: 50%; vertical-align: top; padding: 15px; border: 3px solid #ef4444; border-radius: 8px;">
+<td style="padding: 10px; border: 2px solid #ef4444; vertical-align: top;">
 
-### 🔴 With Correction Context
-**Context Given**: "{correction_context}"
-**Question**: {question}
-**Model's Answer**: **{corrected_answer}**
-
-{corrected_viz}
+**Context Given**: \"""" + correction_context + """\"
+**Question**: """ + question + """
+**Model's Answer**: **""" + corrected_answer + """**
 
 </td>
 </tr>
+"""
+
+            # Align each section horizontally
+            all_section_keys = set(orig_sections.keys()) | set(corr_sections.keys())
+
+            for section_key in ['## 📚 Theory: Attention Mechanism', '## 📊 Which Words Mattered Most?',
+                               '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)', '## 🎯 Layer-by-Layer Predictions',
+                               '## 📚 Theory: How the Final Answer is Selected', '## ✅ Final Answer']:
+                if section_key in all_section_keys:
+                    html += """
+<tr>
+<td style="padding: 10px; border: 2px solid #3b82f6; vertical-align: top;">
+
+""" + orig_sections.get(section_key, "_Section not available_") + """
+
+</td>
+<td style="padding: 10px; border: 2px solid #ef4444; vertical-align: top;">
+
+""" + corr_sections.get(section_key, "_Section not available_") + """
+
+</td>
+</tr>
+"""
+
+            html += """
 </table>
 
 ---
@@ -480,8 +533,8 @@ def main_interface():
 
 | Original (🔵) | With Correction (🔴) |
 |--------------|---------------------|
-| Answer: **{original_answer}** | Answer: **{corrected_answer}** |
-| Based on training data only | Told: "{correction_context}" |
+| Answer: **""" + original_answer + """** | Answer: **""" + corrected_answer + """** |
+| Based on training data only | Told: \"""" + correction_context + """\" |
 
 ### Internal Model Changes:
 1. **Attention patterns**: "That's wrong" tokens attend to the previous answer
@@ -491,6 +544,8 @@ def main_interface():
 
 The layer-by-layer visualizations above show exactly how these internal changes manifest!
             """
+
+            return html
 
         def on_generate(question):
             """Generate answer and show layer-by-layer visualization."""

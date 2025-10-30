@@ -322,10 +322,12 @@ class LLMWithInternals:
 
         # Step 2: Forward pass on PROMPT ONLY (no cheating!)
         # This shows what each layer predicts WITHOUT seeing the answer
+        # Also extract attention to see which input words mattered most
         with torch.no_grad():
             outputs = self.model(
                 **inputs,  # Just the prompt, NOT generated_ids!
-                output_hidden_states=True
+                output_hidden_states=True,
+                output_attentions=True  # NEW: Extract attention weights
             )
 
         # Step 3: Extract predictions at each layer
@@ -401,11 +403,35 @@ class LLMWithInternals:
             self.tokenizer(question, add_special_tokens=False).input_ids
         )
 
+        # Process attention weights to calculate word importance
+        # Average attention from the last position (where we predict) to each input position
+        attentions_tuple = outputs.attentions  # (num_layers, batch, num_heads, seq_len, seq_len)
+
+        # Use last layer's attention (most refined)
+        if attentions_tuple and len(attentions_tuple) > 0:
+            last_layer_attn = attentions_tuple[-1]  # (batch, num_heads, seq_len, seq_len)
+            # Average across heads
+            avg_attn = last_layer_attn.mean(dim=1)[0]  # (seq_len, seq_len)
+
+            # Get attention from last position (where we predict answer) to each input position
+            last_pos = avg_attn.shape[0] - 1
+            attention_weights = avg_attn[last_pos, :].cpu().numpy()  # (seq_len,)
+
+            # Normalize to percentages
+            attention_sum = attention_weights.sum()
+            if attention_sum > 0:
+                attention_percentages = (attention_weights / attention_sum * 100).tolist()
+            else:
+                attention_percentages = [0.0] * len(attention_weights)
+        else:
+            attention_percentages = None
+
         return {
             "response": response_text.strip(),
             "layer_predictions": layer_predictions,
             "input_tokens": input_tokens,
-            "user_question_tokens": user_question_tokens,  # NEW: Just user's question
+            "user_question_tokens": user_question_tokens,  # Just user's question
+            "attention_percentages": attention_percentages,  # NEW: Real attention weights
             "num_layers": len(layer_predictions)
         }
 
