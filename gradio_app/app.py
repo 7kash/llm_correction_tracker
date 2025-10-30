@@ -725,8 +725,8 @@ _Context provided: {correction_context}_
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Context: previous_answer + "is wrong"
-            correction_context = f"{original_answer} is wrong"
+            # Context: previous_answer + "is wrong, the right answer is"
+            correction_context = f"{original_answer} is wrong, the right answer is"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
@@ -751,8 +751,8 @@ _Context provided: {correction_context}_
             original_answer = original_answer_cache[question]
             original_viz = original_viz_cache[question]
 
-            # Context: previous_answer + "is wrong, correct" + correction
-            correction_context = f"{original_answer} is wrong, correct {correction}"
+            # Context: previous_answer + "is wrong, the right answer is" + correction
+            correction_context = f"{original_answer} is wrong, the right answer is {correction}"
 
             # Generate answer with correction context
             corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
