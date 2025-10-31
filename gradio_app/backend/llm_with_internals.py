@@ -379,7 +379,12 @@ class LLMWithInternals:
                     continue
 
                 prob = float(top_probs[i].item())
-                token_str = self.tokenizer.decode([token_id])
+                # Decode with proper cleanup (same as softmax example)
+                token_str = self.tokenizer.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+
+                # If empty after decode, use raw token representation
+                if not token_str.strip():
+                    token_str = self.tokenizer.convert_ids_to_tokens([token_id])[0]
 
                 predictions.append({
                     "token": token_str.strip(),
