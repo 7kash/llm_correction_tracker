@@ -37,41 +37,22 @@
 - Minimalistic monochrome design
 - **File**: `app.py:309-510`
 
+### 7. Subtle Color Accents (Implemented)
+- Introduced soft blue and teal surfaces for key sections
+- Added gradients and accent borders to maintain elegant tone
+- **File**: `app.py:333-414`
+
+### 8. Improved Font Readability (Implemented)
+- Switched global typography to Inter with larger base size
+- Increased line-height and refined button/input styling
+- **File**: `app.py:337-378`
+
+### 9. Guided Correction Flow (Implemented)
+- Added subtabs to walk users through feedback → correction → comparison
+- Included explanatory callout about internal changes during correction
+- **File**: `app.py:519-555`
+
 ## 🚧 Remaining Tasks
-
-### 1. Add Subtle Colors with Transparency
-**Current**: Pure monochrome (black/white/gray)
-**Needed**:
-- Subtle blues (#2563EB) with 3-6% opacity for large backgrounds
-- Subtle teals (#14B8A6) for theory sections
-- Gradient headers with fade effects
-- Keep colors minimal and elegant
-
-**Implementation**:
-```css
-/* Example */
-background: linear-gradient(180deg, rgba(37, 99, 235, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
-background: rgba(37, 99, 235, 0.04); /* 4% opacity blue */
-border-left: 3px solid #2563EB;
-```
-
-### 2. Improve Font Readability
-**Current**: 0.875rem (14px) base font
-**Needed**:
-- Increase to 15px-16px base font
-- Use Inter font family (import from Google Fonts)
-- Line-height: 1.6-1.7 for body text
-- Better font weights (400 for body, 500 for headings)
-
-**Implementation**:
-```css
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-body {
-    font-family: 'Inter', system-ui, sans-serif;
-    font-size: 15px;
-    line-height: 1.6;
-}
-```
 
 ### 3. Restore Side-by-Side Horizontal Comparison
 **Current**: Shows answer comparison, then only corrected visualization
@@ -132,44 +113,6 @@ def create_comparison_view(...):
 
     html += "</table>"
     return html
-```
-
-### 4. Add Subtabs to Correction Tab
-**Current**: Single Correction tab
-**Needed**: Guide users through logic with subtabs
-
-**Implementation**:
-```python
-with gr.Tab("Correction"):
-    with gr.Tabs():
-        with gr.Tab("1. Tell It's Wrong"):
-            gr.Markdown("### Simple Feedback")
-            gr.Markdown("_Click this if the model's answer is incorrect, without providing the right answer._")
-            wrong_btn = gr.Button("That's Wrong")
-
-        with gr.Tab("2. Provide Right Answer"):
-            gr.Markdown("### Guided Correction")
-            gr.Markdown("_Give the model the correct answer to see how it adapts._")
-            correction_input = gr.Textbox(placeholder="Type correct answer")
-            correction_btn = gr.Button("Submit Correction")
-
-        with gr.Tab("3. View Comparison"):
-            gr.Markdown("### See What Changed")
-            comparison_output = gr.Markdown("")
-
-    # Non-technical explanation
-    gr.HTML("""
-    <div style="background: rgba(37, 99, 235, 0.04); padding: 1.5rem; border-radius: 6px; margin-top: 2rem;">
-        <h4>What happens when you tell the model it's wrong?</h4>
-        <p><strong>In simple terms:</strong></p>
-        <ul>
-            <li><strong>Attention shifts:</strong> The model focuses more on your correction</li>
-            <li><strong>Different pathways activate:</strong> Error-handling neurons turn on</li>
-            <li><strong>Layers adjust:</strong> Each layer gradually incorporates the new information</li>
-        </ul>
-        <p>The visualizations show these changes in the model's "thinking process."</p>
-    </div>
-    """)
 ```
 
 ### 5. Make Theory Tab More Mathematical
