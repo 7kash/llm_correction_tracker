@@ -21,7 +21,60 @@ See [gradio_app/README.md](gradio_app/README.md) for details.
 
 ---
 
-## ⚠️ Legacy Version Below
+### Prerequisites
+
+- **Python 3.8+** installed
+- **OpenAI API Key** (get one at [platform.openai.com](https://platform.openai.com/api-keys))
+- A web browser
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd llm_correction_tracker
+   ```
+
+2. **Set up the backend**
+   ```bash
+   cd backend
+
+   # Create a virtual environment
+   python -m venv venv
+
+   # Activate it
+   # On Windows:
+   venv\Scripts\activate
+   # On Mac/Linux:
+   source venv/bin/activate
+
+   # Install dependencies
+   pip install -r requirements.txt
+   ```
+
+3. **Configure your API key**
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env
+
+   # Edit .env and add your OpenAI API key
+   # OPENAI_API_KEY=your_actual_key_here
+   ```
+
+4. **Run the application**
+   ```bash
+   # Start the backend (from the backend directory)
+  PORT=5001 python app.py  
+   ```
+
+5. **Open the frontend**
+   - Open `frontend/index.html` in your web browser
+   - Or use a local server:
+     ```bash
+     # From the frontend directory
+     python -m http.server 8000
+     # Then visit http://localhost:8000
+     ```
 
 The documentation below describes the **old Flask+React version** with semantic similarity analysis. This version is being replaced by the **Gradio app** (see above) which uses **real model internals** instead of text similarity approximations.
 
