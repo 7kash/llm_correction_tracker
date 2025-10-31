@@ -417,7 +417,7 @@ def build_correction_sections(
     <strong>Before feedback:</strong> {original_answer or '—'}<br>
     <strong>After feedback:</strong> {corrected_answer or '—'}
 </div>
-<p style="font-size:0.9rem;color:#4B5563;">We reminded the model: <em>{correction_context}</em></p>
+<p style="font-size:0.9rem;color:var(--muted-text);">We reminded the model: <em>{correction_context}</em></p>
 """
 
     attention = f"""
@@ -672,15 +672,15 @@ def main_interface():
         neutral_hue="slate",
         font=("system-ui", "sans-serif"),
     ).set(
-        body_background_fill="white",
-        button_primary_background_fill="#111827",
-        button_primary_background_fill_hover="#374151",
-        button_primary_text_color="white",
-        button_secondary_background_fill="white",
-        button_secondary_background_fill_hover="#F9FAFB",
-        button_secondary_border_color="#E5E7EB",
-        button_secondary_text_color="#111827",
-        input_background_fill="#FAFAFA",
+        body_background_fill="#CFFAFE",
+        button_primary_background_fill="#475569",
+        button_primary_background_fill_hover="#475569",
+        button_primary_text_color="#FFFFFF",
+        button_secondary_background_fill="#FFFFFF",
+        button_secondary_background_fill_hover="#CFFAFE",
+        button_secondary_border_color="#CBD5E1",
+        button_secondary_text_color="#475569",
+        input_background_fill="#FFFFFF",
         block_border_width="0px",
         block_shadow="none",
     )
@@ -692,35 +692,36 @@ def main_interface():
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 
         :root {
-            --accent-blue: #2563EB;
-            --accent-teal: #14B8A6;
-            --surface-blue: rgba(37, 99, 235, 0.04);
-            --surface-blue-strong: rgba(37, 99, 235, 0.08);
-            --surface-teal: rgba(20, 184, 166, 0.08);
-            --attention-color: #F97316;
-            --attention-bg: rgba(249, 115, 22, 0.12);
-            --softmax-color: #6366F1;
-            --softmax-bg: rgba(99, 102, 241, 0.12);
-            --layers-color: #0EA5E9;
-            --layers-bg: rgba(14, 165, 233, 0.12);
+            --mist-shadow: #CBD5E1;
+            --ice-cyan: #CFFAFE;
+            --cool-slate: #475569;
+            --soft-blossom: #FBCFE8;
+            --surface: #FFFFFF;
+            --surface-border: rgba(203, 213, 225, 0.6);
+            --muted-text: rgba(71, 85, 105, 0.75);
+            --attention-color: var(--cool-slate);
+            --attention-bg: rgba(71, 85, 105, 0.15);
+            --softmax-color: var(--soft-blossom);
+            --softmax-bg: rgba(251, 207, 232, 0.35);
+            --layers-color: var(--mist-shadow);
+            --layers-bg: rgba(203, 213, 225, 0.45);
         }
 
         body, input, textarea, button {
             font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+            color: var(--cool-slate);
         }
 
         body {
             font-size: 15px;
             line-height: 1.65;
-            color: #111827;
-            background: #ffffff;
+            background: var(--ice-cyan);
         }
 
         p, li {
             line-height: 1.7;
         }
 
-        /* Minimalistic elegant styling */
         .container {
             max-width: 960px;
             margin: 0 auto;
@@ -728,100 +729,97 @@ def main_interface():
 
         .title-section {
             text-align: center;
-            padding: 4rem 2rem 2.5rem 2rem;
-            margin-bottom: 2.5rem;
-            background: linear-gradient(180deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
-            border-radius: 8px;
+            padding: 2.2rem 1.75rem 1.5rem;
+            margin-bottom: 1.75rem;
+            background: linear-gradient(180deg, rgba(203, 213, 225, 0.55) 0%, rgba(207, 250, 254, 0) 100%);
+            border-radius: 10px;
+            border: 1px solid var(--surface-border);
         }
 
         .title-main {
-            font-size: 1.9rem;
-            font-weight: 400;
-            letter-spacing: -0.02em;
-            color: #0f172a;
-            margin: 0 0 0.75rem 0;
+            font-size: 1.85rem;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            color: var(--cool-slate);
+            margin: 0 0 0.5rem 0;
         }
 
         .title-subtitle {
             font-size: 1rem;
             font-weight: 400;
-            color: #4b5563;
-            margin: 0;
+            color: var(--muted-text);
+            margin: 0 auto;
             line-height: 1.7;
             max-width: 620px;
-            margin: 0 auto;
         }
 
         .guide-inline {
-            background: var(--surface-blue);
-            padding: 1.75rem;
-            margin: 2.5rem auto;
+            background: linear-gradient(180deg, rgba(207, 250, 254, 0.55) 0%, rgba(255, 255, 255, 0) 100%);
+            padding: 1.4rem 1.6rem;
+            margin: 1.75rem auto 1.4rem;
             font-size: 0.95rem;
-            color: #1f2937;
-            line-height: 1.75;
+            color: var(--cool-slate);
+            line-height: 1.7;
             max-width: 840px;
-            border-left: 3px solid var(--accent-blue);
-            border-radius: 6px;
-            box-shadow: inset 0 1px 2px rgba(37, 99, 235, 0.08);
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
         }
 
         .section-divider {
             height: 1px;
-            background: rgba(15, 23, 42, 0.08);
-            margin: 3rem 0;
+            background: var(--surface-border);
+            margin: 1.75rem 0;
         }
 
-        /* Smaller buttons */
         button {
             padding: 0.55rem 1.35rem !important;
             font-size: 0.92rem !important;
             font-weight: 500 !important;
             border-radius: 4px !important;
             letter-spacing: 0.01em;
+            color: var(--cool-slate);
         }
 
         button.secondary {
-            color: #0f172a !important;
+            color: var(--cool-slate) !important;
         }
 
-        /* Clean inputs */
         input, textarea {
-            border: 1px solid rgba(15, 23, 42, 0.12) !important;
+            border: 1px solid rgba(71, 85, 105, 0.25) !important;
             border-radius: 4px !important;
             font-size: 0.95rem !important;
-            background: rgba(255, 255, 255, 0.9) !important;
+            background: rgba(255, 255, 255, 0.92) !important;
         }
 
-        /* Theory boxes */
         .theory-box {
-            background: linear-gradient(180deg, var(--surface-teal) 0%, rgba(255, 255, 255, 0) 100%);
-            border-left: 3px solid var(--accent-teal);
-            padding: 1.75rem;
-            margin: 1.75rem 0;
-            border-radius: 6px;
+            background: linear-gradient(180deg, rgba(251, 207, 232, 0.5) 0%, rgba(255, 255, 255, 0) 100%);
+            border-left: 3px solid var(--soft-blossom);
+            padding: 1.6rem;
+            margin: 1.6rem 0;
+            border-radius: 8px;
         }
 
         .correction-guide {
-            background: linear-gradient(180deg, rgba(37, 99, 235, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
-            border-radius: 8px;
-            border: 1px solid rgba(37, 99, 235, 0.15);
-            padding: 1.75rem;
-            margin-top: 2.5rem;
+            background: linear-gradient(180deg, rgba(203, 213, 225, 0.4) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 10px;
+            border: 1px solid var(--surface-border);
+            padding: 1.6rem;
+            margin-top: 1.8rem;
         }
 
         .correction-guide h4 {
             margin: 0 0 0.75rem 0;
             font-size: 1.05rem;
-            color: #1f2937;
+            color: var(--cool-slate);
         }
 
         .correction-guide ul {
             margin: 0.75rem 0 0 1.25rem;
-            color: #334155;
+            color: var(--muted-text);
         }
 
         .comparison-table thead th {
-            background: rgba(15, 23, 42, 0.04);
+            background: rgba(203, 213, 225, 0.35);
         }
 
         .comparison-table td {
@@ -829,15 +827,15 @@ def main_interface():
         }
 
         .comparison-table tr:not(:last-child) td {
-            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+            border-bottom: 1px solid var(--surface-border);
         }
 
         .soft-note {
             margin-top: 1rem;
             padding: 0.75rem 1rem;
-            background: #F9FAFB;
-            border-left: 3px solid var(--accent-blue);
-            color: #1F2937;
+            background: rgba(207, 250, 254, 0.45);
+            border-left: 3px solid var(--mist-shadow);
+            color: var(--cool-slate);
             font-size: 0.9rem;
             border-radius: 4px;
         }
@@ -846,7 +844,7 @@ def main_interface():
             padding: 0.85rem 1rem;
             border-radius: 8px;
             font-size: 0.9rem;
-            margin-bottom: 1.2rem;
+            margin-bottom: 1.1rem;
             line-height: 1.6;
         }
 
@@ -882,7 +880,7 @@ def main_interface():
         .metric-label {
             text-align: right;
             font-weight: 500;
-            color: #1F2937;
+            color: var(--cool-slate);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -891,7 +889,7 @@ def main_interface():
         .metric-logit {
             font-family: "JetBrains Mono", "Menlo", monospace;
             font-size: 0.75rem;
-            color: #6B7280;
+            color: var(--muted-text);
         }
 
         .metric-track {
@@ -899,7 +897,7 @@ def main_interface():
             width: 100%;
             height: 6px;
             border-radius: 999px;
-            background: rgba(15, 23, 42, 0.08);
+            background: rgba(71, 85, 105, 0.12);
             overflow: hidden;
         }
 
@@ -913,7 +911,7 @@ def main_interface():
 
         .metric-value {
             font-size: 0.75rem;
-            color: #4B5563;
+            color: var(--muted-text);
             font-weight: 500;
         }
 
@@ -924,30 +922,30 @@ def main_interface():
         }
 
         .layer-card {
-            border: 1px solid rgba(15, 23, 42, 0.1);
+            border: 1px solid var(--surface-border);
             border-radius: 10px;
             padding: 1rem;
-            background: #FFFFFF;
-            box-shadow: 0 4px 8px rgba(15, 23, 42, 0.04);
+            background: var(--surface);
+            box-shadow: 0 4px 10px rgba(71, 85, 105, 0.08);
         }
 
         .layer-title {
             font-size: 0.9rem;
             font-weight: 600;
-            color: var(--layers-color);
+            color: var(--cool-slate);
             margin-bottom: 0.5rem;
         }
 
         .layer-actual {
             font-size: 0.9rem;
-            color: #111827;
+            color: var(--cool-slate);
             margin-bottom: 0.5rem;
         }
 
         .layer-alternatives {
             margin: 0;
             padding-left: 1rem;
-            color: #4B5563;
+            color: var(--muted-text);
             font-size: 0.85rem;
         }
 
@@ -962,10 +960,56 @@ def main_interface():
         }
 
         .comparison-card .column {
-            border: 1px solid rgba(15, 23, 42, 0.1);
+            border: 1px solid var(--surface-border);
             border-radius: 10px;
             padding: 1rem;
-            background: #FFFFFF;
+            background: var(--surface);
+        }
+
+        .tab-nav button {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            color: var(--cool-slate);
+        }
+
+        #query-subtabs .tab-nav button:nth-of-type(1)::before,
+        #correction-subtabs .tab-nav button:nth-of-type(1)::before,
+        #theory-subtabs .tab-nav button:nth-of-type(1)::before {
+            content: '';
+            width: 0.55rem;
+            height: 0.55rem;
+            border-radius: 999px;
+            background: var(--attention-color);
+            display: inline-block;
+        }
+
+        #query-subtabs .tab-nav button:nth-of-type(2)::before,
+        #correction-subtabs .tab-nav button:nth-of-type(2)::before,
+        #theory-subtabs .tab-nav button:nth-of-type(2)::before {
+            content: '';
+            width: 0.55rem;
+            height: 0.55rem;
+            border-radius: 999px;
+            background: var(--softmax-color);
+            display: inline-block;
+        }
+
+        #query-subtabs .tab-nav button:nth-of-type(3)::before,
+        #correction-subtabs .tab-nav button:nth-of-type(3)::before,
+        #theory-subtabs .tab-nav button:nth-of-type(3)::before {
+            content: '';
+            width: 0.55rem;
+            height: 0.55rem;
+            border-radius: 999px;
+            background: var(--layers-color);
+            display: inline-block;
+        }
+
+        #query-subtabs .tab-nav button::before,
+        #correction-subtabs .tab-nav button::before,
+        #theory-subtabs .tab-nav button::before {
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
         }
         """
     ) as demo:
@@ -1021,17 +1065,17 @@ def main_interface():
 
                 query_overview_md = gr.Markdown("_Run the model to see how it pieces the answer together._")
 
-                with gr.Tabs():
-                    with gr.Tab("🟠 Attention"):
-                        gr.Markdown("Orange bars show which words the model stared at most when forming the answer.")
+                with gr.Tabs(elem_id="query-subtabs"):
+                    with gr.Tab("Attention"):
+                        gr.Markdown("Slate bars show which words the model relied on most when forming the answer.")
                         query_attention_panel = gr.HTML(empty_attention_html)
 
-                    with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("Purple bars reveal the probability of the top candidate words before the model committed.")
+                    with gr.Tab("Softmax"):
+                        gr.Markdown("Blossom bars reveal the probability of the top candidate words before the model committed.")
                         query_softmax_panel = gr.HTML(empty_softmax_html)
 
-                    with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Blue cards track how confidence in the final word builds as we move through deeper layers.")
+                    with gr.Tab("Layer by Layer"):
+                        gr.Markdown("Mist cards track how confidence in the final word builds as we move through deeper layers.")
                         query_layers_panel = gr.HTML(empty_layers_html)
 
             with gr.Tab("Correction"):
@@ -1052,17 +1096,17 @@ def main_interface():
 
                 correction_summary_md = gr.Markdown(correction_placeholder)
 
-                with gr.Tabs():
-                    with gr.Tab("🟠 Attention"):
-                        gr.Markdown("Compare how the orange attention weights shift after feedback.")
+                with gr.Tabs(elem_id="correction-subtabs"):
+                    with gr.Tab("Attention"):
+                        gr.Markdown("Compare how the slate attention weights shift after feedback.")
                         correction_attention_panel = gr.HTML("<em>No comparison yet.</em>")
 
-                    with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("See how the probability mass moves toward the corrected word.")
+                    with gr.Tab("Softmax"):
+                        gr.Markdown("See how the blossom probability mass moves toward the corrected word.")
                         correction_softmax_panel = gr.HTML("<em>No comparison yet.</em>")
 
-                    with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Check whether deeper layers now lock onto the corrected answer sooner.")
+                    with gr.Tab("Layer by Layer"):
+                        gr.Markdown("Check whether deeper layers now lock onto the corrected answer sooner with a mist glow.")
                         correction_layers_panel = gr.HTML("<em>No comparison yet.</em>")
 
             with gr.Tab("Theory"):
@@ -1072,14 +1116,14 @@ def main_interface():
                 theory_overview_md = gr.Markdown(THEORY_TEXT["overview"])
                 theory_feedback_md = gr.Markdown(THEORY_TEXT["feedback"])
 
-                with gr.Tabs():
-                    with gr.Tab("🟠 Attention"):
+                with gr.Tabs(elem_id="theory-subtabs"):
+                    with gr.Tab("Attention"):
                         theory_attention_md = gr.Markdown(THEORY_TEXT["attention"])
 
-                    with gr.Tab("🟣 Softmax"):
+                    with gr.Tab("Softmax"):
                         theory_softmax_md = gr.Markdown(THEORY_TEXT["softmax"])
 
-                    with gr.Tab("🔵 Layer by Layer"):
+                    with gr.Tab("Layer by Layer"):
                         theory_layers_md = gr.Markdown(THEORY_TEXT["layers"])
 
         # Event handlers
