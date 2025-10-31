@@ -68,28 +68,39 @@ def clean_token(token: str) -> tuple:
     if len(token) == 0 or len(token) > 50:
         return None
 
-    # AGGRESSIVE: Only keep tokens with at least 2 letters OR known punctuation
-    # This filters out random subword tokens like "ikz", "glob", "omer"
-    if not re.search(r'[a-zA-Z]{2,}', token):
-        # Less than 2 letters - only keep if it's known punctuation or single meaningful letter
-        if token not in ['.', ',', '!', '?', ':', ';', '-', "'", '"', 'a', 'I', 'A']:
-            return None
+    # Keep tokens that are:
+    # 1. Numbers (digits)
+    # 2. At least 2 letters
+    # 3. Known punctuation or single meaningful letter
 
-    # Filter out tokens that look like random fragments
-    if len(token) >= 2:
-        # Must have at least one vowel
-        if not re.search(r'[aeiouAEIOU]', token):
-            return None
+    # Allow pure numbers
+    if re.match(r'^\d+$', token):
+        return (token, has_leading_space)
 
-        # Must be ASCII only (filters "ßen" and other non-English)
-        if not token.isascii():
-            return None
+    # Allow tokens with at least 2 letters
+    if re.search(r'[a-zA-Z]{2,}', token):
+        # Filter out tokens that look like random fragments
+        if len(token) >= 2:
+            # Must have at least one vowel (for letter-based tokens)
+            if not re.search(r'[aeiouAEIOU]', token):
+                return None
 
-        # Filter tokens with 3+ consonants in a row at start (like "strk")
-        if re.match(r'^[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{3,}', token):
-            return None
+            # Must be ASCII only (filters "ßen" and other non-English)
+            if not token.isascii():
+                return None
 
-    return (token, has_leading_space)
+            # Filter tokens with 3+ consonants in a row at start (like "strk")
+            if re.match(r'^[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{3,}', token):
+                return None
+
+        return (token, has_leading_space)
+
+    # For tokens without 2+ letters, only keep if it's known punctuation or single meaningful letter
+    if token in ['.', ',', '!', '?', ':', ';', '-', "'", '"', 'a', 'I', 'A']:
+        return (token, has_leading_space)
+
+    # Filter everything else
+    return None
 
 
 def get_clean_words(tokens: List[str]) -> List[Tuple[str, List[int]]]:
