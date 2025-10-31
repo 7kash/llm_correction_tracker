@@ -9,7 +9,7 @@ Deployment: Hugging Face Spaces
 
 import gradio as gr
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import matplotlib.pyplot as plt
 
 from backend.llm_with_internals import LLMWithInternals
@@ -29,8 +29,9 @@ from visualizations.logit_lens import (
 )
 from visualizations.answer_flow import (
     create_answer_generation_flow,
-    create_layer_by_layer_visualization,
-    analyze_word_importance
+    analyze_word_importance,
+    get_clean_words,
+    clean_token
 )
 
 
@@ -97,6 +98,329 @@ def generate_response(
 
     return result["response"], result
 
+
+def _format_percentage_bar(label: str, value: float, color_var: str, max_items: int = 8) -> str:
+    """Create a horizontal bar for percentage-based metrics."""
+    display_pct = round(value, 1)
+    bar_width = min(100, int(value))
+    return (
+        "<div class=\"metric-row\">"
+        f"<span class=\"metric-label\">{label}</span>"
+        "<div class=\"metric-track\">"
+        f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var({color_var});\"></div>"
+        "</div>"
+        f"<span class=\"metric-value\">{display_pct}%</span>"
+        "</div>"
+    )
+
+
+def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]], str]:
+    """Return top attention words and formatted HTML."""
+    attention_percentages = internals.get("attention_percentages")
+    if attention_percentages is None:
+        return [], "_Attention data is not available for this turn yet._"
+
+    input_tokens = internals.get("input_tokens", [])
+    question = internals.get("question", "")
+    context = internals.get("context", "")
+
+    allowed_words = set()
+    if question:
+        for word in question.lower().replace("?", " ").replace(",", " ").split():
+            word = word.strip()
+            if word:
+                allowed_words.add(word)
+
+    if context:
+        context_clean = (
+            context.replace("#", " ")
+            .replace(",", " ")
+            .replace("?", " ")
+            .replace(".", " ")
+            .replace("\"", " ")
+            .replace("'", " ")
+        )
+        for word in context_clean.split():
+            word = word.strip().lower()
+            if word:
+                allowed_words.add(word)
+
+    word_attention: Dict[str, float] = {}
+    for word, token_indices in get_clean_words(input_tokens):
+        word_lower = word.lower().strip()
+        if not word_lower or word_lower not in allowed_words:
+            continue
+
+        total_attention = 0.0
+        for idx in token_indices:
+            if idx < len(attention_percentages):
+                total_attention += float(attention_percentages[idx])
+
+        if total_attention > 0:
+            word_attention[word] = total_attention
+
+    if not word_attention:
+        return [], "_The model focused on helper tokens rather than the question words. Try another prompt!_"
+
+    sorted_words = sorted(word_attention.items(), key=lambda item: item[1], reverse=True)[:8]
+    metric_rows = [
+        _format_percentage_bar(word, value, "--attention-color")
+        for word, value in sorted_words
+    ]
+    return sorted_words, "<div class=\"metric-list\">" + "".join(metric_rows) + "</div>"
+
+
+def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
+    """Return softmax token candidates and formatted HTML."""
+    softmax_example = internals.get("softmax_example")
+    if not softmax_example:
+        return [], "_Probability data will appear once the model proposes a token._"
+
+    items = []
+    rows = []
+    for item in softmax_example:
+        token = item.get("token", "?")
+        prob = float(item.get("probability", 0.0)) * 100
+        logit = float(item.get("logit", 0.0))
+        cleaned = clean_token(token)
+        if cleaned:
+            token_display, _ = cleaned
+        else:
+            token_display = token.replace("▁", " ").strip() or token
+
+        items.append({
+            "token": token_display,
+            "prob": prob,
+            "logit": logit,
+        })
+        bar_width = min(100, int(prob))
+        rows.append(
+            "<div class=\"metric-row\">"
+            f"<span class=\"metric-label\">{token_display}</span>"
+            f"<span class=\"metric-logit\">logit {logit:+.2f}</span>"
+            "<div class=\"metric-track\">"
+            f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var(--softmax-color);\"></div>"
+            "</div>"
+            f"<span class=\"metric-value\">{prob:.1f}%</span>"
+            "</div>"
+        )
+
+    return items, "<div class=\"metric-list\">" + "".join(rows) + "</div>"
+
+
+def _collect_layer_metrics(internals: dict, actual_answer: str) -> Tuple[List[dict], str]:
+    """Return layer-by-layer predictions and formatted HTML."""
+    layer_predictions = internals.get("layer_predictions") or []
+    if not layer_predictions:
+        return [], "_Layer probes activate once the model begins forming an answer._"
+
+    layer_rows = []
+    metrics = []
+    total_layers = len(layer_predictions)
+    # Show last 4 layers for readability
+    start_index = max(0, total_layers - 4)
+
+    for layer_idx in range(start_index, total_layers):
+        layer_data = layer_predictions[layer_idx]
+        predictions = layer_data.get("predictions", [])
+        actual_entry = None
+        alternatives = []
+
+        for pred in predictions:
+            token = pred.get("token", "")
+            prob = float(pred.get("probability", 0.0)) * 100
+            is_actual = pred.get("is_actual_answer", False)
+            cleaned = clean_token(token)
+            if cleaned:
+                display_token, _ = cleaned
+            else:
+                display_token = token.replace("▁", " ").strip() or token
+
+            data_point = {"token": display_token, "prob": prob}
+            if is_actual:
+                actual_entry = data_point
+            else:
+                alternatives.append(data_point)
+
+        alternatives = alternatives[:3]
+        metrics.append({
+            "layer": layer_idx,
+            "actual": actual_entry,
+            "alternatives": alternatives,
+        })
+
+        alt_lines = "".join(
+            f"<li>{alt['token']} — {alt['prob']:.1f}%</li>" for alt in alternatives
+        ) or "<li>No strong alternatives</li>"
+
+        actual_line = (
+            f"<strong>{actual_entry['token']}</strong> — {actual_entry['prob']:.1f}%"
+            if actual_entry
+            else "Model had not locked onto the final word yet"
+        )
+
+        layer_rows.append(
+            "<div class=\"layer-card\">"
+            f"<div class=\"layer-title\">Layer {layer_idx}</div>"
+            f"<div class=\"layer-actual\">{actual_line}</div>"
+            f"<ul class=\"layer-alternatives\">{alt_lines}</ul>"
+            "</div>"
+        )
+
+    return metrics, "<div class=\"layer-grid\">" + "".join(layer_rows) + "</div>"
+
+
+THEORY_TEXT = {
+    "attention": """
+### How attention works
+
+<div class=\"section-note pill-attention\"><strong>Plain-language intuition:</strong> attention assigns a weight to each input word so the model can concentrate on the parts of the question that matter most for the next word it will say.</div>
+
+**Formula:**
+
+$$\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$$
+
+This means we compare the question (queries, Q) with every word in the prompt (keys, K), scale the scores, turn them into percentages with softmax, and build a blended summary of the most relevant words (values, V).
+""".strip(),
+    "softmax": """
+### How softmax turns scores into probabilities
+
+<div class=\"section-note pill-softmax\"><strong>Plain-language intuition:</strong> the model assigns a raw score to every possible next token. Softmax stretches those scores so that they add up to 100%, making it easy to see which word is most likely.</div>
+
+**Formula:**
+
+$$\\text{softmax}(z_i) = \\frac{e^{z_i}}{\\sum_j e^{z_j}}$$
+
+The exponential emphasises higher scores. Even a slightly better score becomes a noticeably higher probability after softmax.
+""".strip(),
+    "layers": """
+### Why layer-by-layer probes are helpful
+
+<div class=\"section-note pill-layers\"><strong>Plain-language intuition:</strong> each transformer layer refines the hidden representation of the answer. Probing with the logit lens shows how confidence in the final word grows as we move deeper into the network.</div>
+
+We reuse the final prediction head on intermediate layers. When the correct answer keeps climbing toward 100% across layers, it means the model is converging on the right concept.
+""".strip(),
+}
+
+
+def build_visualization_payload(internals: dict, guidance_note: str = "") -> dict:
+    """Bundle friendly explanations, metrics, and theory snippets for the UI."""
+
+    question = internals.get("question", "").strip() or "your question"
+    answer = internals.get("response", "").strip() or internals.get("text", "")
+
+    overview_lines = [
+        "### What the model just did",
+        f"It read **{question}** and proposed **{answer or '...'}** as a one-word answer.",
+        "The sections below break down how it focused on the prompt, weighed candidate words, and refined the final choice layer by layer.",
+    ]
+    if guidance_note:
+        overview_lines.append(f"<div class='soft-note'>{guidance_note}</div>")
+
+    attention_metrics, attention_html = _collect_attention_metrics(internals)
+    softmax_metrics, softmax_html = _collect_softmax_metrics(internals)
+    layer_metrics, layer_html = _collect_layer_metrics(internals, answer)
+
+    return {
+        "question": question,
+        "answer": answer,
+        "overview": "\n\n".join(overview_lines),
+        "attention": {
+            "metrics": attention_metrics,
+            "markdown": (
+                "<div class=\"section-note pill-attention\"><strong>Where focus went:</strong> higher bars mean the model relied more on that word.</div>"
+                + attention_html
+            ),
+        },
+        "softmax": {
+            "metrics": softmax_metrics,
+            "markdown": (
+                "<div class=\"section-note pill-softmax\"><strong>Top candidates:</strong> the probability shows how confident the model was before choosing.</div>"
+                + softmax_html
+            ),
+        },
+        "layers": {
+            "metrics": layer_metrics,
+            "markdown": (
+                "<div class=\"section-note pill-layers\"><strong>Confidence by layer:</strong> later layers should favour the final answer.</div>"
+                + layer_html
+            ),
+        },
+        "theory": {
+            "attention": THEORY_TEXT["attention"],
+            "softmax": THEORY_TEXT["softmax"],
+            "layers": THEORY_TEXT["layers"],
+        },
+    }
+
+
+def build_correction_sections(
+    question: str,
+    original_answer: str,
+    original_payload: dict,
+    correction_context: str,
+    corrected_answer: str,
+    corrected_payload: dict,
+) -> Tuple[str, str, str, str]:
+    """Return summary and per-section comparison HTML blocks."""
+
+    def extract_markdown(payload: dict, key: str) -> str:
+        if not isinstance(payload, dict):
+            return "<em>No data available.</em>"
+        section = payload.get(key, {})
+        if not isinstance(section, dict):
+            return "<em>No data available.</em>"
+        return section.get("markdown", "<em>No data available.</em>")
+
+    summary = f"""
+<div class="section-note pill-layers">
+    <strong>Question:</strong> {question}<br>
+    <strong>Before feedback:</strong> {original_answer or '—'}<br>
+    <strong>After feedback:</strong> {corrected_answer or '—'}
+</div>
+<p style="font-size:0.9rem;color:#4B5563;">We reminded the model: <em>{correction_context}</em></p>
+"""
+
+    attention = f"""
+<div class="comparison-card">
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--attention-color);">Before feedback</h4>
+        {extract_markdown(original_payload, 'attention')}
+    </div>
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--attention-color);">After feedback</h4>
+        {extract_markdown(corrected_payload, 'attention')}
+    </div>
+</div>
+"""
+
+    softmax = f"""
+<div class="comparison-card">
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--softmax-color);">Before feedback</h4>
+        {extract_markdown(original_payload, 'softmax')}
+    </div>
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--softmax-color);">After feedback</h4>
+        {extract_markdown(corrected_payload, 'softmax')}
+    </div>
+</div>
+"""
+
+    layers = f"""
+<div class="comparison-card">
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--layers-color);">Before feedback</h4>
+        {extract_markdown(original_payload, 'layers')}
+    </div>
+    <div class="column">
+        <h4 style="margin-top:0; color: var(--layers-color);">After feedback</h4>
+        {extract_markdown(corrected_payload, 'layers')}
+    </div>
+</div>
+"""
+
+    return summary, attention, softmax, layers
 
 def is_one_word_question(question: str) -> Tuple[bool, str]:
     """
@@ -189,14 +513,9 @@ def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, s
         return result["response"], warning_viz
 
     # Create visualization
-    vocab = get_vocab_list()
-    visualization = create_layer_by_layer_visualization(result, vocab)
+    payload = build_visualization_payload(result, guidance_note=message)
 
-    # Add helpful note if there was a warning
-    if message:
-        visualization = f"💡 {message}\n\n---\n\n{visualization}"
-
-    return result["response"], visualization
+    return result["response"], payload
 
 
 def create_turn_summary(internals: dict, previous_internals: Optional[dict] = None) -> str:
@@ -339,6 +658,12 @@ def main_interface():
             --surface-blue: rgba(37, 99, 235, 0.04);
             --surface-blue-strong: rgba(37, 99, 235, 0.08);
             --surface-teal: rgba(20, 184, 166, 0.08);
+            --attention-color: #F97316;
+            --attention-bg: rgba(249, 115, 22, 0.12);
+            --softmax-color: #6366F1;
+            --softmax-bg: rgba(99, 102, 241, 0.12);
+            --layers-color: #0EA5E9;
+            --layers-bg: rgba(14, 165, 233, 0.12);
         }
 
         body, input, textarea, button {
@@ -467,6 +792,142 @@ def main_interface():
         .comparison-table tr:not(:last-child) td {
             border-bottom: 1px solid rgba(15, 23, 42, 0.08);
         }
+
+        .soft-note {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: #F9FAFB;
+            border-left: 3px solid var(--accent-blue);
+            color: #1F2937;
+            font-size: 0.9rem;
+            border-radius: 4px;
+        }
+
+        .section-note {
+            padding: 0.85rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 1.2rem;
+            line-height: 1.6;
+        }
+
+        .pill-attention {
+            background: var(--attention-bg);
+            border-left: 3px solid var(--attention-color);
+        }
+
+        .pill-softmax {
+            background: var(--softmax-bg);
+            border-left: 3px solid var(--softmax-color);
+        }
+
+        .pill-layers {
+            background: var(--layers-bg);
+            border-left: 3px solid var(--layers-color);
+        }
+
+        .metric-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.65rem;
+        }
+
+        .metric-row {
+            display: grid;
+            grid-template-columns: 140px 90px 1fr 60px;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .metric-label {
+            text-align: right;
+            font-weight: 500;
+            color: #1F2937;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .metric-logit {
+            font-family: "JetBrains Mono", "Menlo", monospace;
+            font-size: 0.75rem;
+            color: #6B7280;
+        }
+
+        .metric-track {
+            position: relative;
+            width: 100%;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }
+
+        .metric-fill {
+            position: absolute;
+            height: 100%;
+            left: 0;
+            top: 0;
+            border-radius: inherit;
+        }
+
+        .metric-value {
+            font-size: 0.75rem;
+            color: #4B5563;
+            font-weight: 500;
+        }
+
+        .layer-grid {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+
+        .layer-card {
+            border: 1px solid rgba(15, 23, 42, 0.1);
+            border-radius: 10px;
+            padding: 1rem;
+            background: #FFFFFF;
+            box-shadow: 0 4px 8px rgba(15, 23, 42, 0.04);
+        }
+
+        .layer-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--layers-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .layer-actual {
+            font-size: 0.9rem;
+            color: #111827;
+            margin-bottom: 0.5rem;
+        }
+
+        .layer-alternatives {
+            margin: 0;
+            padding-left: 1rem;
+            color: #4B5563;
+            font-size: 0.85rem;
+        }
+
+        .layer-alternatives li {
+            margin-bottom: 0.25rem;
+        }
+
+        .comparison-card {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+        }
+
+        .comparison-card .column {
+            border: 1px solid rgba(15, 23, 42, 0.1);
+            border-radius: 10px;
+            padding: 1rem;
+            background: #FFFFFF;
+        }
         """
     ) as demo:
 
@@ -493,8 +954,16 @@ def main_interface():
 
         gr.HTML('<div class="section-divider"></div>')
 
+        empty_attention_html = "<em>Run the model to see how attention focuses on your question.</em>"
+        empty_softmax_html = "<em>Run the model to see which words had the highest probability.</em>"
+        empty_layers_html = "<em>Run the model to see how confidence evolves across layers.</em>"
+        correction_placeholder = "_Generate an answer and press “That’s Wrong” to compare before and after._"
+
         with gr.Tabs():
             with gr.Tab("Query"):
+                gr.Markdown("### Ask the model a quick fact")
+                gr.Markdown("Keep it simple: questions like **What is the capital of Australia?** work best because the answer is a single word.")
+
                 question_input = gr.Textbox(
                     label="",
                     placeholder="What is the capital of Australia?",
@@ -511,356 +980,250 @@ def main_interface():
                     interactive=False
                 )
 
-                turn_summary = gr.Markdown("")
+                query_overview_md = gr.Markdown("_Run the model to see how it pieces the answer together._")
+
+                with gr.Tabs():
+                    with gr.Tab("🟠 Attention"):
+                        gr.Markdown("Orange bars show which words the model stared at most when forming the answer.")
+                        query_attention_panel = gr.HTML(empty_attention_html)
+
+                    with gr.Tab("🟣 Softmax"):
+                        gr.Markdown("Purple bars reveal the probability of the top candidate words before the model committed.")
+                        query_softmax_panel = gr.HTML(empty_softmax_html)
+
+                    with gr.Tab("🔵 Layer by Layer"):
+                        gr.Markdown("Blue cards track how confidence in the final word builds as we move through deeper layers.")
+                        query_layers_panel = gr.HTML(empty_layers_html)
 
             with gr.Tab("Correction"):
-                gr.Markdown("_If the model's answer was incorrect, provide feedback:_")
+                gr.Markdown("### Teach the model when it slips")
+                gr.Markdown("First, tell the model its answer was off. Then optionally supply the right word so it can adjust.")
 
-                with gr.Row():
-                    wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
-                    correction_input = gr.Textbox(
-                        label="",
-                        placeholder="Or type the correct answer",
-                        lines=1,
-                        show_label=False,
-                        scale=2
-                    )
+                wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm")
+
+                gr.Markdown("**Optional:** Type the correct word so the model can aim directly at it.")
+                correction_input = gr.Textbox(
+                    label="",
+                    placeholder="Type the word it should have said",
+                    lines=1,
+                    show_label=False
+                )
 
                 correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
 
-                comparison_output = gr.Markdown("")
+                correction_summary_md = gr.Markdown(correction_placeholder)
+
+                with gr.Tabs():
+                    with gr.Tab("🟠 Attention"):
+                        gr.Markdown("Compare how the orange attention weights shift after feedback.")
+                        correction_attention_panel = gr.HTML("<em>No comparison yet.</em>")
+
+                    with gr.Tab("🟣 Softmax"):
+                        gr.Markdown("See how the probability mass moves toward the corrected word.")
+                        correction_softmax_panel = gr.HTML("<em>No comparison yet.</em>")
+
+                    with gr.Tab("🔵 Layer by Layer"):
+                        gr.Markdown("Check whether deeper layers now lock onto the corrected answer sooner.")
+                        correction_layers_panel = gr.HTML("<em>No comparison yet.</em>")
 
             with gr.Tab("Theory"):
-                gr.HTML("""
-                <div class="theory-box">
-                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
-                        What happens when you correct an LLM?
-                    </h3>
-                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
-                        <p>When you provide a correction, the model processes it as additional context. This triggers several internal changes:</p>
-                        <ol>
-                            <li><strong>Attention Reweighting:</strong> The model shifts attention to correction-related tokens</li>
-                            <li><strong>Feature Activation:</strong> Error-detection and disagreement neurons activate</li>
-                            <li><strong>Layer Progression:</strong> Early layers process the contradiction, later layers synthesize the correction</li>
-                        </ol>
-                        <p>The visualizations show these changes quantitatively through attention distributions and layer-wise predictions.</p>
-                    </div>
-                </div>
+                gr.Markdown("### Peek behind the math")
+                gr.Markdown("Each subtab pairs a plain-language explanation with the core formula so curious readers can follow along without a math degree.")
 
-                <div class="theory-box">
-                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
-                        Attention Mechanism
-                    </h3>
-                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
-                        <p>The model assigns weights to each input token to determine relevance.</p>
-                        <p style="font-family: Georgia, serif; font-style: italic; margin: 1rem 0;">
-                            Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d<sub>k</sub>) V
-                        </p>
-                        <p>Higher attention scores indicate stronger influence on the output.</p>
-                    </div>
-                </div>
+                with gr.Tabs():
+                    with gr.Tab("🟠 Attention"):
+                        theory_attention_md = gr.Markdown(THEORY_TEXT["attention"])
 
-                <div class="theory-box">
-                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
-                        Softmax Transformation
-                    </h3>
-                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
-                        <p>Raw model outputs (logits) are transformed into probabilities:</p>
-                        <p style="font-family: Georgia, serif; font-style: italic; margin: 1rem 0;">
-                            softmax(z<sub>i</sub>) = exp(z<sub>i</sub>) / Σ exp(z<sub>j</sub>)
-                        </p>
-                        <p>This ensures outputs sum to 1.0 and amplifies differences between scores.</p>
-                    </div>
-                </div>
+                    with gr.Tab("🟣 Softmax"):
+                        theory_softmax_md = gr.Markdown(THEORY_TEXT["softmax"])
 
-                <div class="theory-box">
-                    <h3 style="font-size: 0.875rem; font-weight: 500; color: #111827; margin: 0 0 1rem 0;">
-                        Logit Lens
-                    </h3>
-                    <div style="font-size: 0.875rem; line-height: 1.8; color: #4B5563;">
-                        <p>The logit lens technique reveals intermediate predictions by projecting hidden states from any layer through the final prediction head.</p>
-                        <p>Early layers show uncertainty; later layers converge on the final answer as the model refines its representation.</p>
-                    </div>
-                </div>
-                """)
-
+                    with gr.Tab("🔵 Layer by Layer"):
+                        theory_layers_md = gr.Markdown(THEORY_TEXT["layers"])
 
         # Event handlers
         # Store original answer to avoid re-generation
-        original_answer_cache = {}
-        original_viz_cache = {}
-
-        def create_comparison_view(question, original_answer, original_viz, correction_context, corrected_answer, corrected_viz):
-            """Create side-by-side comparison with theory shown once, data aligned horizontally."""
-
-            # Split visualizations into sections (only on ## headers)
-            def split_sections(viz_text):
-                sections = {}
-                current_section = None
-                current_content = []
-
-                for line in viz_text.split('\n'):
-                    if line.strip().startswith('## '):
-                        # Save previous section
-                        if current_section and current_content:
-                            sections[current_section] = '\n'.join(current_content)
-                        current_section = line.strip()
-                        current_content = []  # Don't include the ## header line itself
-                    else:
-                        current_content.append(line)
-
-                if current_section and current_content:
-                    sections[current_section] = '\n'.join(current_content)
-
-                return sections
-
-            def extract_subsection(content, subsection_header):
-                """Extract a ### subsection from content."""
-                lines = content.split('\n')
-                extracted = []
-                capturing = False
-
-                for line in lines:
-                    if line.strip().startswith('### '):
-                        if subsection_header in line:
-                            capturing = True
-                            # Don't include the ### header line
-                        else:
-                            capturing = False
-                    elif capturing:
-                        extracted.append(line)
-
-                return '\n'.join(extracted)
-
-            orig_sections = split_sections(original_viz)
-            corr_sections = split_sections(corrected_viz)
-
-            # Start with answer comparison
-            html = f"""
-## Answer Comparison
-
-<div style="background: #FAFAFA; padding: 1.5rem; margin: 2rem 0; border-left: 2px solid #111827;">
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 1rem;">
-        <div>
-            <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
-                Original Answer
-            </div>
-            <div style="font-size: 1.25rem; font-weight: 500; color: #111827;">
-                {original_answer}
-            </div>
-        </div>
-        <div>
-            <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #9CA3AF; margin-bottom: 0.5rem;">
-                After Correction
-            </div>
-            <div style="font-size: 1.25rem; font-weight: 500; color: #111827;">
-                {corrected_answer}
-            </div>
-        </div>
-    </div>
-    <div style="font-size: 0.875rem; color: #6B7280; margin-top: 1rem;">
-        Correction context: "{correction_context}"
-    </div>
-</div>
-
----
-
-## Detailed Comparison
-
-<div style="width: 100%; overflow-x: auto;">
-<table class="comparison-table" style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0; table-layout: fixed;">
-<tr>
-<th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
-Without Correction
-</th>
-<th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
-With Correction
-</th>
-</tr>
-"""
-
-            # Theory sections - show once (full width)
-            all_section_keys = set(orig_sections.keys()) | set(corr_sections.keys())
-            theory_sections = [
-                '## 📚 Theory: Attention Mechanism',
-                '## 📚 Theory: Softmax Transformation',
-                '## 📚 Theory: How the Final Answer is Selected',
-                '## 📚 Theory: Logit Lens (Layer-by-Layer Predictions)'
-            ]
-
-            for theory_key in theory_sections:
-                if theory_key in all_section_keys:
-                    theory_content = orig_sections.get(theory_key) or corr_sections.get(theory_key, "")
-                    if theory_content:
-                        # Remove ### subsections from theory content (they'll be shown separately in data sections)
-                        theory_lines = []
-                        for line in theory_content.split('\n'):
-                            if line.strip().startswith('### '):
-                                break  # Stop when we hit a ### subsection
-                            theory_lines.append(line)
-                        theory_content_clean = '\n'.join(theory_lines)
-
-                        html += f"""
-<tr>
-<td colspan="2" style="padding: 1.5rem; border: 1px solid #E5E7EB; background: #FAFAFA; word-wrap: break-word; overflow-wrap: break-word;">
-{theory_content_clean}
-</td>
-</tr>
-"""
-
-            # Data sections - side by side
-            data_section_pairs = [
-                ('Attention Distribution', 'Attention', '## 📚 Theory: Attention Mechanism'),
-                ('Top Token Probabilities', 'Softmax', '## 📚 Theory: Softmax Transformation'),
-                ('## ✅ Final Answer', 'Final Answer', None),
-                ('## 🎯 Layer-by-Layer Predictions', 'Layer Predictions', None)
-            ]
-
-            for section_key, label, parent_section in data_section_pairs:
-                # Find sections
-                orig_section = None
-                corr_section = None
-
-                if parent_section:
-                    # This is a ### subsection, extract it from parent
-                    parent_content_orig = orig_sections.get(parent_section, "")
-                    parent_content_corr = corr_sections.get(parent_section, "")
-
-                    if parent_content_orig:
-                        orig_section = extract_subsection(parent_content_orig, section_key)
-                    if parent_content_corr:
-                        corr_section = extract_subsection(parent_content_corr, section_key)
-                else:
-                    # This is a ## section, use directly
-                    for key in orig_sections:
-                        if section_key in key:
-                            orig_section = orig_sections[key]
-                            break
-
-                    for key in corr_sections:
-                        if section_key in key:
-                            corr_section = corr_sections[key]
-                            break
-
-                if orig_section or corr_section:
-                    # Special handling for Final Answer section - add question and context
-                    if section_key == '## ✅ Final Answer':
-                        orig_display = f"""
-{orig_section or f"_{label} not available_"}
-
-_Original question: {question}_
-"""
-                        corr_display = f"""
-{corr_section or f"_{label} not available_"}
-
-_Context provided: {correction_context}_
-"""
-                    else:
-                        orig_display = orig_section or f"_{label} not available_"
-                        corr_display = corr_section or f"_{label} not available_"
-
-                    html += f"""
-<tr>
-<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
-{orig_display}
-</td>
-<td style="padding: 1.5rem; border: 1px solid #E5E7EB; vertical-align: top; background: white; word-wrap: break-word; overflow-wrap: break-word; max-width: 50vw; overflow: auto;">
-{corr_display}
-</td>
-</tr>
-"""
-
-            html += """
-</table>
-</div>
-"""
-
-            return html
+        original_answer_cache: Dict[str, Dict[str, object]] = {}
 
         def on_generate(question):
-            """Generate answer and show layer-by-layer visualization."""
+            """Generate answer and update all tabs."""
             if not question.strip():
-                return ("Please enter a question!", "_Ask a question to see how the model forms its answer!_")
+                return (
+                    "Please enter a question!",
+                    "_Ask something like “What is the capital of Australia?”_",
+                    empty_attention_html,
+                    empty_softmax_html,
+                    empty_layers_html,
+                    THEORY_TEXT["attention"],
+                    THEORY_TEXT["softmax"],
+                    THEORY_TEXT["layers"],
+                    correction_placeholder,
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            # Generate with layer-by-layer tracking
-            answer, visualization = generate_one_word_answer(question)
+            answer, payload = generate_one_word_answer(question)
 
-            # Cache for correction comparison
-            original_answer_cache[question] = answer
-            original_viz_cache[question] = visualization
+            if isinstance(payload, str):
+                # Error or guidance message
+                return (
+                    answer,
+                    payload,
+                    empty_attention_html,
+                    empty_softmax_html,
+                    empty_layers_html,
+                    THEORY_TEXT["attention"],
+                    THEORY_TEXT["softmax"],
+                    THEORY_TEXT["layers"],
+                    correction_placeholder,
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            return (answer, visualization)
+            original_answer_cache[question] = {
+                "answer": answer,
+                "payload": payload,
+            }
+
+            return (
+                answer,
+                payload["overview"],
+                payload["attention"]["markdown"],
+                payload["softmax"]["markdown"],
+                payload["layers"]["markdown"],
+                payload["theory"]["attention"],
+                payload["theory"]["softmax"],
+                payload["theory"]["layers"],
+                "_Click “That’s Wrong” to see how feedback reshapes the internals._",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
 
         def on_wrong_clicked(question):
             """Handle 'That's Wrong!' button - tell model its answer was wrong."""
             if not question or question not in original_answer_cache:
-                return "⚠️ Please generate an answer first!"
+                return (
+                    "⚠️ Please generate an answer first!",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            # Get original answer from cache
-            original_answer = original_answer_cache[question]
-            original_viz = original_viz_cache[question]
+            original_entry = original_answer_cache[question]
+            original_answer = original_entry["answer"]
+            original_payload = original_entry["payload"]
 
-            # Context: previous_answer + "is wrong, the right answer is"
             correction_context = f"{original_answer} is wrong, the right answer is"
+            corrected_answer, corrected_payload = generate_one_word_answer(question, context=correction_context)
 
-            # Generate answer with correction context
-            corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
+            if isinstance(corrected_payload, str):
+                return (
+                    corrected_payload,
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            # Create comparison
-            comparison = create_comparison_view(
-                question, original_answer, original_viz,
-                correction_context, corrected_answer, corrected_viz
+            summary, attention_html, softmax_html, layers_html = build_correction_sections(
+                question,
+                original_answer,
+                original_payload,
+                correction_context,
+                corrected_answer,
+                corrected_payload,
             )
 
-            return comparison
+            return summary, attention_html, softmax_html, layers_html
 
         def on_correction(question, correction):
             """Handle manual correction with specific answer."""
             if not correction.strip():
-                return "⚠️ Please enter a correction!"
+                return (
+                    "⚠️ Please enter a correction!",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
             if not question or question not in original_answer_cache:
-                return "⚠️ Please generate an answer first!"
+                return (
+                    "⚠️ Please generate an answer first!",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            # Get original answer from cache
-            original_answer = original_answer_cache[question]
-            original_viz = original_viz_cache[question]
+            original_entry = original_answer_cache[question]
+            original_answer = original_entry["answer"]
+            original_payload = original_entry["payload"]
 
-            # Context: previous_answer + "is wrong, the right answer is" + correction
-            correction_context = f"{original_answer} is wrong, the right answer is {correction}"
+            correction_context = f"{original_answer} is wrong, the right answer is {correction.strip()}"
+            corrected_answer, corrected_payload = generate_one_word_answer(question, context=correction_context)
 
-            # Generate answer with correction context
-            corrected_answer, corrected_viz = generate_one_word_answer(question, context=correction_context)
+            if isinstance(corrected_payload, str):
+                return (
+                    corrected_payload,
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
+                )
 
-            # Create comparison
-            comparison = create_comparison_view(
-                question, original_answer, original_viz,
-                correction_context, corrected_answer, corrected_viz
+            summary, attention_html, softmax_html, layers_html = build_correction_sections(
+                question,
+                original_answer,
+                original_payload,
+                correction_context,
+                corrected_answer,
+                corrected_payload,
             )
 
-            return comparison
+            return summary, attention_html, softmax_html, layers_html
 
         generate_btn.click(
             fn=on_generate,
             inputs=[question_input],
-            outputs=[response_output, turn_summary],
+            outputs=[
+                response_output,
+                query_overview_md,
+                query_attention_panel,
+                query_softmax_panel,
+                query_layers_panel,
+                theory_attention_md,
+                theory_softmax_md,
+                theory_layers_md,
+                correction_summary_md,
+                correction_attention_panel,
+                correction_softmax_panel,
+                correction_layers_panel,
+            ],
             show_progress="full"
         )
 
         wrong_btn.click(
             fn=on_wrong_clicked,
             inputs=[question_input],
-            outputs=[comparison_output],
+            outputs=[
+                correction_summary_md,
+                correction_attention_panel,
+                correction_softmax_panel,
+                correction_layers_panel,
+            ],
             show_progress="full"
         )
 
         correction_btn.click(
             fn=on_correction,
             inputs=[question_input, correction_input],
-            outputs=[comparison_output],
+            outputs=[
+                correction_summary_md,
+                correction_attention_panel,
+                correction_softmax_panel,
+                correction_layers_panel,
+            ],
             show_progress="full"
         )
-
         return demo
 
 
