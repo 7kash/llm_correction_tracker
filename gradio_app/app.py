@@ -514,43 +514,21 @@ def main_interface():
                 turn_summary = gr.Markdown("")
 
             with gr.Tab("Correction"):
-                with gr.Tabs():
-                    with gr.Tab("1. Tell It's Wrong"):
-                        gr.Markdown("### Simple Feedback")
-                        gr.Markdown(
-                            "_Click if the model's answer is incorrect but you don't want to reveal the right answer yet._"
-                        )
-                        wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
+                gr.Markdown("_If the model's answer was incorrect, provide feedback:_")
 
-                    with gr.Tab("2. Provide Right Answer"):
-                        gr.Markdown("### Guided Correction")
-                        gr.Markdown("_Give the model the correct answer to see how it adapts internally._")
-                        correction_input = gr.Textbox(
-                            label="",
-                            placeholder="Type the correct answer",
-                            lines=1,
-                            show_label=False,
-                        )
-                        correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
+                with gr.Row():
+                    wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
+                    correction_input = gr.Textbox(
+                        label="",
+                        placeholder="Or type the correct answer",
+                        lines=1,
+                        show_label=False,
+                        scale=2
+                    )
 
-                    with gr.Tab("3. View Comparison"):
-                        gr.Markdown("### See What Changed")
-                        gr.Markdown(
-                            "_Explore how attention, token probabilities, and final answers differ before and after correction._"
-                        )
-                        comparison_output = gr.Markdown("")
+                correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
 
-                gr.HTML("""
-                <div class="correction-guide">
-                    <h4>What happens inside the model when you correct it?</h4>
-                    <ul>
-                        <li><strong>Attention shifts:</strong> the model focuses on your feedback tokens.</li>
-                        <li><strong>Error circuits activate:</strong> layers trigger neurons that handle contradictions.</li>
-                        <li><strong>Predictions realign:</strong> later layers incorporate the correction into the final answer.</li>
-                    </ul>
-                    <p style="margin-top: 1rem; color: #1f2937;">Use the subtabs above to guide the model step-by-step.</p>
-                </div>
-                """)
+                comparison_output = gr.Markdown("")
 
             with gr.Tab("Theory"):
                 gr.HTML("""
