@@ -331,66 +331,141 @@ def main_interface():
         title="LLM under the hood",
         theme=minimal_theme,
         css="""
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+        :root {
+            --accent-blue: #2563EB;
+            --accent-teal: #14B8A6;
+            --surface-blue: rgba(37, 99, 235, 0.04);
+            --surface-blue-strong: rgba(37, 99, 235, 0.08);
+            --surface-teal: rgba(20, 184, 166, 0.08);
+        }
+
+        body, input, textarea, button {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+
+        body {
+            font-size: 15px;
+            line-height: 1.65;
+            color: #111827;
+            background: #ffffff;
+        }
+
+        p, li {
+            line-height: 1.7;
+        }
+
         /* Minimalistic elegant styling */
         .container {
             max-width: 960px;
             margin: 0 auto;
         }
+
         .title-section {
             text-align: center;
-            padding: 4rem 2rem 2rem 2rem;
-            margin-bottom: 2rem;
+            padding: 4rem 2rem 2.5rem 2rem;
+            margin-bottom: 2.5rem;
+            background: linear-gradient(180deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 8px;
         }
+
         .title-main {
-            font-size: 1.875rem;
-            font-weight: 300;
+            font-size: 1.9rem;
+            font-weight: 400;
             letter-spacing: -0.02em;
-            color: #111827;
+            color: #0f172a;
             margin: 0 0 0.75rem 0;
         }
+
         .title-subtitle {
-            font-size: 0.9375rem;
+            font-size: 1rem;
             font-weight: 400;
-            color: #6B7280;
+            color: #4b5563;
             margin: 0;
-            line-height: 1.6;
-            max-width: 600px;
+            line-height: 1.7;
+            max-width: 620px;
             margin: 0 auto;
         }
+
         .guide-inline {
-            background: #FAFAFA;
-            padding: 1.5rem;
-            margin: 2rem auto;
-            font-size: 0.875rem;
-            color: #6B7280;
-            line-height: 1.8;
-            max-width: 800px;
-            border-left: 2px solid #111827;
+            background: var(--surface-blue);
+            padding: 1.75rem;
+            margin: 2.5rem auto;
+            font-size: 0.95rem;
+            color: #1f2937;
+            line-height: 1.75;
+            max-width: 840px;
+            border-left: 3px solid var(--accent-blue);
+            border-radius: 6px;
+            box-shadow: inset 0 1px 2px rgba(37, 99, 235, 0.08);
         }
+
         .section-divider {
             height: 1px;
-            background: #E5E7EB;
+            background: rgba(15, 23, 42, 0.08);
             margin: 3rem 0;
         }
+
         /* Smaller buttons */
         button {
-            padding: 0.5rem 1.25rem !important;
-            font-size: 0.875rem !important;
-            font-weight: 400 !important;
-            border-radius: 2px !important;
+            padding: 0.55rem 1.35rem !important;
+            font-size: 0.92rem !important;
+            font-weight: 500 !important;
+            border-radius: 4px !important;
+            letter-spacing: 0.01em;
         }
+
+        button.secondary {
+            color: #0f172a !important;
+        }
+
         /* Clean inputs */
         input, textarea {
-            border: 1px solid #E5E7EB !important;
-            border-radius: 2px !important;
-            font-size: 0.875rem !important;
+            border: 1px solid rgba(15, 23, 42, 0.12) !important;
+            border-radius: 4px !important;
+            font-size: 0.95rem !important;
+            background: rgba(255, 255, 255, 0.9) !important;
         }
+
         /* Theory boxes */
         .theory-box {
-            background: #FAFAFA;
-            border-left: 2px solid #111827;
-            padding: 1.5rem;
-            margin: 1.5rem 0;
+            background: linear-gradient(180deg, var(--surface-teal) 0%, rgba(255, 255, 255, 0) 100%);
+            border-left: 3px solid var(--accent-teal);
+            padding: 1.75rem;
+            margin: 1.75rem 0;
+            border-radius: 6px;
+        }
+
+        .correction-guide {
+            background: linear-gradient(180deg, rgba(37, 99, 235, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 8px;
+            border: 1px solid rgba(37, 99, 235, 0.15);
+            padding: 1.75rem;
+            margin-top: 2.5rem;
+        }
+
+        .correction-guide h4 {
+            margin: 0 0 0.75rem 0;
+            font-size: 1.05rem;
+            color: #1f2937;
+        }
+
+        .correction-guide ul {
+            margin: 0.75rem 0 0 1.25rem;
+            color: #334155;
+        }
+
+        .comparison-table thead th {
+            background: rgba(15, 23, 42, 0.04);
+        }
+
+        .comparison-table td {
+            background: rgba(255, 255, 255, 0.92);
+        }
+
+        .comparison-table tr:not(:last-child) td {
+            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
         }
         """
     ) as demo:
@@ -439,21 +514,43 @@ def main_interface():
                 turn_summary = gr.Markdown("")
 
             with gr.Tab("Correction"):
-                gr.Markdown("_If the model's answer was incorrect, provide feedback:_")
+                with gr.Tabs():
+                    with gr.Tab("1. Tell It's Wrong"):
+                        gr.Markdown("### Simple Feedback")
+                        gr.Markdown(
+                            "_Click if the model's answer is incorrect but you don't want to reveal the right answer yet._"
+                        )
+                        wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
 
-                with gr.Row():
-                    wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm", scale=1)
-                    correction_input = gr.Textbox(
-                        label="",
-                        placeholder="Or type the correct answer",
-                        lines=1,
-                        show_label=False,
-                        scale=2
-                    )
+                    with gr.Tab("2. Provide Right Answer"):
+                        gr.Markdown("### Guided Correction")
+                        gr.Markdown("_Give the model the correct answer to see how it adapts internally._")
+                        correction_input = gr.Textbox(
+                            label="",
+                            placeholder="Type the correct answer",
+                            lines=1,
+                            show_label=False,
+                        )
+                        correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
 
-                correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
+                    with gr.Tab("3. View Comparison"):
+                        gr.Markdown("### See What Changed")
+                        gr.Markdown(
+                            "_Explore how attention, token probabilities, and final answers differ before and after correction._"
+                        )
+                        comparison_output = gr.Markdown("")
 
-                comparison_output = gr.Markdown("")
+                gr.HTML("""
+                <div class="correction-guide">
+                    <h4>What happens inside the model when you correct it?</h4>
+                    <ul>
+                        <li><strong>Attention shifts:</strong> the model focuses on your feedback tokens.</li>
+                        <li><strong>Error circuits activate:</strong> layers trigger neurons that handle contradictions.</li>
+                        <li><strong>Predictions realign:</strong> later layers incorporate the correction into the final answer.</li>
+                    </ul>
+                    <p style="margin-top: 1rem; color: #1f2937;">Use the subtabs above to guide the model step-by-step.</p>
+                </div>
+                """)
 
             with gr.Tab("Theory"):
                 gr.HTML("""
@@ -593,7 +690,7 @@ def main_interface():
 ## Detailed Comparison
 
 <div style="width: 100%; overflow-x: auto;">
-<table style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0; table-layout: fixed;">
+<table class="comparison-table" style="width: 100%; border-collapse: separate; border-spacing: 0; margin: 2rem 0; table-layout: fixed;">
 <tr>
 <th style="width: 50%; padding: 1rem; background: #F3F4F6; color: #1F2937; font-weight: 500; border: 1px solid #E5E7EB;">
 Without Correction
