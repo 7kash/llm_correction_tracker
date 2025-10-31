@@ -357,12 +357,12 @@ class LLMWithInternals:
                 # (This is what the model predicted at this position)
                 actual_answer_prob = float(probs[actual_token_ids[0]].item())
 
-            # Get top 5 alternatives
-            top_probs, top_ids = torch.topk(probs, k=5)
+            # Get top 20 alternatives to filter through (we'll keep only 3 meaningful ones)
+            top_probs, top_ids = torch.topk(probs, k=20)
 
             predictions = []
 
-            # ALWAYS show the actual answer first (even if not in top 5)
+            # ALWAYS show the actual answer first (even if not in top 20)
             predictions.append({
                 "token": response_text,  # The actual complete answer
                 "token_id": actual_token_ids[0] if actual_token_ids else -1,
@@ -371,7 +371,9 @@ class LLMWithInternals:
             })
 
             # Then show top 3 alternatives (excluding actual if it's already there)
-            for i in range(min(5, len(top_ids))):
+            # Look through more tokens to find meaningful alternatives
+            alternatives_found = 0
+            for i in range(min(20, len(top_ids))):  # Check up to 20 tokens to find 3 good ones
                 token_id = top_ids[i].item()
 
                 # Skip if this is the actual answer token (already shown)
@@ -386,15 +388,33 @@ class LLMWithInternals:
                 if not token_str.strip():
                     token_str = self.tokenizer.convert_ids_to_tokens([token_id])[0]
 
+                # Filter out meaningless tokens
+                token_clean = token_str.strip()
+
+                # Skip if it's a low-quality token:
+                # - Byte-level tokens like <0x0A> (newline), <0x20> (space)
+                # - Single punctuation marks (unless high probability)
+                # - Empty or whitespace only
+                # - Special formatting tokens
+                if not token_clean or len(token_clean) == 0:
+                    continue
+                if token_clean.startswith('<0x') and token_clean.endswith('>'):
+                    continue  # Skip byte tokens like <0x0A>
+                if len(token_clean) == 1 and token_clean in '()[]{},.;:!?\'"<>|/\\-_=+*&^%$#@~`' and prob < 0.05:
+                    continue  # Skip low-probability punctuation
+                if token_clean.startswith('<') and token_clean.endswith('>'):
+                    continue  # Skip special tokens like <unk>, <pad>, etc.
+
                 predictions.append({
-                    "token": token_str.strip(),
+                    "token": token_clean,
                     "token_id": token_id,
                     "probability": prob,
                     "is_actual_answer": False
                 })
 
-                # Keep only top 3 alternatives (plus actual answer)
-                if len([p for p in predictions if not p.get("is_actual_answer", False)]) >= 3:
+                alternatives_found += 1
+                # Keep only top 3 meaningful alternatives (plus actual answer)
+                if alternatives_found >= 3:
                     break
 
             layer_predictions.append({
@@ -404,10 +424,13 @@ class LLMWithInternals:
 
             # Store softmax example from final layer for educational visualization
             if layer_idx == len(hidden_states_tuple) - 1:
-                # Get top 5 tokens with their logits and probs
-                top_logits_vals, top_logit_ids = torch.topk(logits, k=5)
+                # Get top 20 tokens to filter through (we'll keep 5 meaningful ones)
+                top_logits_vals, top_logit_ids = torch.topk(logits, k=20)
                 softmax_data = []
-                for i in range(5):
+                for i in range(20):
+                    if len(softmax_data) >= 5:  # Stop after finding 5 good tokens
+                        break
+
                     token_id = top_logit_ids[i].item()
                     logit_val = float(top_logits_vals[i].item())
                     prob_val = float(probs[token_id].item())
@@ -418,8 +441,20 @@ class LLMWithInternals:
                     if not token_str.strip():
                         token_str = self.tokenizer.convert_ids_to_tokens([token_id])[0]
 
+                    token_clean = token_str.strip()
+
+                    # Filter out meaningless tokens (same as layer predictions)
+                    if not token_clean or len(token_clean) == 0:
+                        continue
+                    if token_clean.startswith('<0x') and token_clean.endswith('>'):
+                        continue  # Skip byte tokens
+                    if len(token_clean) == 1 and token_clean in '()[]{},.;:!?\'"<>|/\\-_=+*&^%$#@~`' and prob_val < 0.05:
+                        continue  # Skip low-probability punctuation
+                    if token_clean.startswith('<') and token_clean.endswith('>'):
+                        continue  # Skip special tokens
+
                     softmax_data.append({
-                        "token": token_str.strip(),
+                        "token": token_clean,
                         "logit": logit_val,
                         "probability": prob_val
                     })
