@@ -216,12 +216,7 @@ def _collect_layer_metrics(internals: dict, actual_answer: str) -> Tuple[List[di
 
     layer_rows = []
     metrics = []
-    total_layers = len(layer_predictions)
-    # Show last 4 layers for readability
-    start_index = max(0, total_layers - 4)
-
-    for layer_idx in range(start_index, total_layers):
-        layer_data = layer_predictions[layer_idx]
+    for layer_idx, layer_data in enumerate(layer_predictions):
         predictions = layer_data.get("predictions", [])
         actual_entry = None
         alternatives = []
@@ -271,6 +266,29 @@ def _collect_layer_metrics(internals: dict, actual_answer: str) -> Tuple[List[di
 
 
 THEORY_TEXT = {
+    "overview": """
+### How a transformer answers your question
+
+<div class=\"section-note pill-softmax\"><strong>High-level flow:</strong> a question is turned into tokens, each pass through the network refines their meaning, and the model finally chooses the next word by comparing many possibilities.</div>
+
+1. **Embedding & position sense.** The text is split into sub-word pieces and turned into vectors that encode meaning plus order.
+2. **Attention exchanges.** Each layer lets tokens borrow context from one another, so the model can pick out the words that really matter.
+3. **Layer updates.** Feed-forward blocks transform the focused information into sharper internal features.
+4. **Prediction head.** The refined vector is scored against every vocabulary item, then softmax produces a clean probability distribution.
+
+This app surfaces the three most important snapshots: attention weights (what it focused on), the softmax slate (which words competed), and the layer-by-layer probes (how certainty built up).
+""".strip(),
+    "feedback": """
+### What happens when you correct the model
+
+<div class=\"section-note pill-layers\"><strong>Why feedback matters:</strong> telling the model it is wrong nudges the internal state on the next run. The prompt now includes your hint, so attention, layer activations, and softmax scores shift toward the correction.</div>
+
+* **Attention.** The reminder phrase pulls focus toward the corrective words, so the model rereads the prompt with that constraint in mind.
+* **Layer dynamics.** Early layers incorporate the new clue, while deeper layers propagate it, pushing the correct answer higher.
+* **Softmax.** Competing tokens lose probability mass as the corrected token gathers stronger evidence.
+
+Even though weights are frozen, the conversation context acts like temporary memory: every new turn recomputes the internals using both the original question and your feedback.
+""".strip(),
     "attention": """
 ### How attention works
 
@@ -280,7 +298,14 @@ THEORY_TEXT = {
 
 $$\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$$
 
-This means we compare the question (queries, Q) with every word in the prompt (keys, K), scale the scores, turn them into percentages with softmax, and build a blended summary of the most relevant words (values, V).
+Step-by-step:
+
+1. Compare the current prediction vector (**Q**) with every word from the prompt (**K**) to see which ones feel related.
+2. Scale the scores by $1/\\sqrt{d_k}$ so large vectors do not explode the numbers.
+3. Use softmax to translate those scores into easy-to-read percentages.
+4. Blend the value vectors (**V**) using those percentages, giving the model a context summary tailored to the next word.
+
+The orange bars in the Query tab show which words grabbed the most weight for the final answer.
 """.strip(),
     "softmax": """
 ### How softmax turns scores into probabilities
@@ -291,14 +316,26 @@ This means we compare the question (queries, Q) with every word in the prompt (k
 
 $$\\text{softmax}(z_i) = \\frac{e^{z_i}}{\\sum_j e^{z_j}}$$
 
-The exponential emphasises higher scores. Even a slightly better score becomes a noticeably higher probability after softmax.
+What this means in practice:
+
+* Each candidate token gets exponentiated ($e^{z_i}$), exaggerating stronger evidence.
+* All exponentiated scores are normalised by their sum so they form a true probability distribution.
+* Even small score gaps can create big probability differences, which is why the purple bars can look decisive.
+
+Sampling or temperature tweaks would flatten or sharpen these probabilities, but here we keep it simple so the behaviour stays interpretable.
 """.strip(),
     "layers": """
 ### Why layer-by-layer probes are helpful
 
 <div class=\"section-note pill-layers\"><strong>Plain-language intuition:</strong> each transformer layer refines the hidden representation of the answer. Probing with the logit lens shows how confidence in the final word grows as we move deeper into the network.</div>
 
-We reuse the final prediction head on intermediate layers. When the correct answer keeps climbing toward 100% across layers, it means the model is converging on the right concept.
+TinyLlama has 22 transformer layers. For every layer we temporarily plug in the final prediction head and read the implied probabilities:
+
+* **Early layers** capture broad topics (“this is about geography”). The correct word may only have a small lead.
+* **Middle layers** integrate attention results and rule out conflicting options.
+* **Late layers** sharpen the concept until one token clearly dominates.
+
+When feedback is applied, look for the blue cards to show the corrected token rising sooner or more steeply across the stack.
 """.strip(),
 }
 
@@ -347,6 +384,8 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
             ),
         },
         "theory": {
+            "overview": THEORY_TEXT["overview"],
+            "feedback": THEORY_TEXT["feedback"],
             "attention": THEORY_TEXT["attention"],
             "softmax": THEORY_TEXT["softmax"],
             "layers": THEORY_TEXT["layers"],
@@ -1028,7 +1067,10 @@ def main_interface():
 
             with gr.Tab("Theory"):
                 gr.Markdown("### Peek behind the math")
-                gr.Markdown("Each subtab pairs a plain-language explanation with the core formula so curious readers can follow along without a math degree.")
+                gr.Markdown("These notes unpack what the TinyLlama is doing internally, then dive into the colour-coded pieces you see across the app.")
+
+                theory_overview_md = gr.Markdown(THEORY_TEXT["overview"])
+                theory_feedback_md = gr.Markdown(THEORY_TEXT["feedback"])
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
@@ -1053,6 +1095,8 @@ def main_interface():
                     empty_attention_html,
                     empty_softmax_html,
                     empty_layers_html,
+                    THEORY_TEXT["overview"],
+                    THEORY_TEXT["feedback"],
                     THEORY_TEXT["attention"],
                     THEORY_TEXT["softmax"],
                     THEORY_TEXT["layers"],
@@ -1072,6 +1116,8 @@ def main_interface():
                     empty_attention_html,
                     empty_softmax_html,
                     empty_layers_html,
+                    THEORY_TEXT["overview"],
+                    THEORY_TEXT["feedback"],
                     THEORY_TEXT["attention"],
                     THEORY_TEXT["softmax"],
                     THEORY_TEXT["layers"],
@@ -1092,6 +1138,8 @@ def main_interface():
                 payload["attention"]["markdown"],
                 payload["softmax"]["markdown"],
                 payload["layers"]["markdown"],
+                payload["theory"]["overview"],
+                payload["theory"]["feedback"],
                 payload["theory"]["attention"],
                 payload["theory"]["softmax"],
                 payload["theory"]["layers"],
@@ -1190,6 +1238,8 @@ def main_interface():
                 query_attention_panel,
                 query_softmax_panel,
                 query_layers_panel,
+                theory_overview_md,
+                theory_feedback_md,
                 theory_attention_md,
                 theory_softmax_md,
                 theory_layers_md,
