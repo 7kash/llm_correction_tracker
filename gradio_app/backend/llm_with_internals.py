@@ -244,7 +244,8 @@ class LLMWithInternals:
         self,
         question: str,
         max_new_tokens: int = 10,
-        context: str = None
+        context: str = None,
+        temperature: float = 0.2,
     ) -> Dict:
         """
         Generate one-word answer and show what each layer predicts (logit lens).
@@ -272,6 +273,9 @@ class LLMWithInternals:
         else:
             prompt = f"Answer in one word only.\n\nQuestion: {question}\nAnswer:"
 
+        temperature = float(temperature or 0.2)
+        temperature = max(0.05, temperature)
+
         # Tokenize
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
@@ -290,7 +294,7 @@ class LLMWithInternals:
             generated_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                temperature=0.1,
+                temperature=temperature,
                 do_sample=False,
                 pad_token_id=self.tokenizer.eos_token_id,
                 eos_token_id=stop_token_ids
@@ -383,7 +387,8 @@ class LLMWithInternals:
 
             # Apply LM head
             logits = self.model.lm_head(hidden_at_prediction)
-            probs = torch.softmax(logits, dim=-1)
+            scaled_logits = logits / temperature
+            probs = torch.softmax(scaled_logits, dim=-1)
 
             # Get probability of the ACTUAL answer (decoded full text)
             actual_answer_prob = 0.0
@@ -460,14 +465,13 @@ class LLMWithInternals:
             # Store softmax example from final layer for educational visualization
             if layer_idx == len(hidden_states_tuple) - 1:
                 # Get top 20 tokens to filter through (we'll keep 5 meaningful ones)
-                top_logits_vals, top_logit_ids = torch.topk(logits, k=20)
+                _, top_logit_ids = torch.topk(logits, k=20)
                 softmax_data = []
                 for i in range(20):
                     if len(softmax_data) >= 5:  # Stop after finding 5 good tokens
                         break
 
                     token_id = top_logit_ids[i].item()
-                    logit_val = float(top_logits_vals[i].item())
                     prob_val = float(probs[token_id].item())
                     # Decode with proper cleanup
                     token_str = self.tokenizer.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)
@@ -490,7 +494,7 @@ class LLMWithInternals:
 
                     softmax_data.append({
                         "token": token_clean,
-                        "logit": logit_val,
+                        "logit": float((scaled_logits[token_id]).item()),
                         "probability": prob_val
                     })
 
@@ -538,6 +542,7 @@ class LLMWithInternals:
             "context": context,  # Context for filtering
             "attention_heatmap": attention_heatmap,
             "generated_tokens": output_tokens,
+            "temperature": temperature,
         }
 
     def _process_attentions_from_forward(

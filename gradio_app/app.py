@@ -12,7 +12,7 @@ import math
 import re
 
 import gradio as gr
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Optional
 
 from backend.llm_with_internals import LLMWithInternals
 from visualizations.answer_flow import get_clean_words, clean_token
@@ -270,24 +270,128 @@ def _display_token(token: str) -> str:
     return html.escape(safe or token or "∅")
 
 
-def _render_attention_heatmap(heatmap: dict) -> str:
+def _render_attention_heatmap(heatmap: dict, internals: dict) -> str:
     if not heatmap:
         return "<em>Run the model to see a token-by-token attention heatmap.</em>"
 
     prompt_tokens = heatmap.get("prompt_tokens") or []
-    output_tokens = heatmap.get("output_tokens") or []
+    raw_output_tokens = heatmap.get("output_tokens") or []
     values = heatmap.get("values") or []
 
-    if not prompt_tokens or not output_tokens or not values:
+    if not prompt_tokens or not raw_output_tokens or not values:
         return "<em>Attention heatmap data is unavailable.</em>"
 
+    def normalise_word(text: str) -> str:
+        return re.sub(r"[^0-9A-Za-z']+", "", text or "").lower()
+
+    def split_words(text: str) -> List[str]:
+        if not text:
+            return []
+        return [word for word in re.split(r"[^0-9A-Za-z']+", text) if word]
+
+    # Map user supplied words (question + context) so we only show those rows.
+    ordered_words: List[dict] = []
+    for source, raw_text in (("Question", internals.get("question", "")), ("Context", internals.get("context", ""))):
+        for word in split_words(raw_text):
+            ordered_words.append(
+                {
+                    "key": normalise_word(word),
+                    "label": word,
+                    "source": source,
+                }
+            )
+
+    input_words = get_clean_words(prompt_tokens)
+    matched_rows = []
+    used_indices: Set[int] = set()
+
+    for cleaned_word, token_indices in input_words:
+        key = normalise_word(cleaned_word)
+        if not key:
+            continue
+        matched_index = next(
+            (idx for idx, entry in enumerate(ordered_words) if idx not in used_indices and entry["key"] == key),
+            None,
+        )
+        if matched_index is None:
+            continue
+
+        used_indices.add(matched_index)
+        entry = ordered_words[matched_index]
+        matched_rows.append(
+            {
+                "order": matched_index,
+                "label": entry["label"],
+                "source": entry["source"],
+                "token_indices": token_indices,
+            }
+        )
+
+    # Include any remaining user words that did not map to tokens (zero attention rows).
+    for idx, entry in enumerate(ordered_words):
+        if idx in used_indices:
+            continue
+        matched_rows.append(
+            {
+                "order": idx,
+                "label": entry["label"],
+                "source": entry["source"],
+                "token_indices": [],
+            }
+        )
+
+    if not matched_rows:
+        return "<em>No prompt or context words were detected for the heatmap.</em>"
+
+    matched_rows.sort(key=lambda item: item["order"])
+
+    # Combine output tokens into readable words.
+    output_word_entries = []
+    output_words = get_clean_words(raw_output_tokens)
+    if output_words:
+        for idx, (word, token_indices) in enumerate(output_words):
+            output_word_entries.append(
+                {
+                    "label": word,
+                    "indices": token_indices,
+                    "order": idx,
+                }
+            )
+    else:
+        for idx, token in enumerate(raw_output_tokens):
+            output_word_entries.append(
+                {
+                    "label": (_display_token(token) or f"Token {idx+1}"),
+                    "indices": [idx],
+                    "order": idx,
+                }
+            )
+
+    if not output_word_entries or not values:
+        return "<em>Attention heatmap data is unavailable.</em>"
+
+    header_cells = []
+    for entry in output_word_entries:
+        header_cells.append(f"<th>{html.escape(entry['label'])}</th>")
+
     rows_html = []
-    for prompt_idx, prompt_token in enumerate(prompt_tokens):
+    for row in matched_rows:
         cells = []
-        for column_idx, column in enumerate(values):
+        for column in output_word_entries:
             pct = 0.0
-            if prompt_idx < len(column):
-                pct = float(column[prompt_idx])
+            for output_idx in column["indices"]:
+                if output_idx >= len(values):
+                    continue
+                column_values = values[output_idx]
+                if not column_values:
+                    continue
+                if row["token_indices"]:
+                    for prompt_idx in row["token_indices"]:
+                        if prompt_idx < len(column_values):
+                            pct += float(column_values[prompt_idx])
+                else:
+                    # Row without explicit tokens still appears but registers zero attention.
+                    pct += 0.0
             intensity = min(0.85, 0.15 + (pct / 100.0) * 0.7)
             cells.append(
                 "<td style=\"background: rgba(249, 115, 22, {intensity:.3f});\">"
@@ -295,20 +399,19 @@ def _render_attention_heatmap(heatmap: dict) -> str:
                 "</td>".format(intensity=intensity)
             )
 
+        source_badge = f"<span class=\"heatmap-source heatmap-source-{row['source'].lower()}\">{row['source']}</span>"
         rows_html.append(
             "<tr>"
-            f"<th scope=\"row\">{_display_token(prompt_token)}</th>"
+            f"<th scope=\"row\">{source_badge}{html.escape(row['label'])}</th>"
             + "".join(cells)
             + "</tr>"
         )
 
-    header_cells = [f"<th>{_display_token(token)}</th>" for token in output_tokens]
-    header_html = "<tr><th>Prompt token</th>" + "".join(header_cells) + "</tr>"
+    header_html = "<tr><th>Prompt &amp; context words</th>" + "".join(header_cells) + "</tr>"
 
     return (
         "<div class=\"heatmap-wrapper\">"
-        "<div class=\"heatmap-heading\"><strong>Token attention heatmap</strong> — colours show how much each output token"
-        " re-read your prompt words.</div>"
+        "<div class=\"heatmap-heading\"><strong>Attention heatmap</strong> — each cell shows how strongly an output word re-read your prompt or context terms.</div>"
         "<table class=\"heatmap-table\">"
         + header_html
         + "".join(rows_html)
@@ -317,7 +420,7 @@ def _render_attention_heatmap(heatmap: dict) -> str:
     )
 
 
-def _render_softmax_waterfall(metrics: List[dict]) -> str:
+def _render_softmax_waterfall(metrics: List[dict], temperature: Optional[float] = None) -> str:
     if not metrics:
         return "<em>Softmax waterfall will appear after the model proposes a token.</em>"
 
@@ -364,9 +467,19 @@ def _render_softmax_waterfall(metrics: List[dict]) -> str:
             "</div>"
         )
 
+    if temperature is not None:
+        explainer = (
+            "<div class=\"waterfall-heading\"><strong>Softmax waterfall</strong> — logits are scaled by the temperature "
+            f"(<code>{temperature:.2f}</code>) before exponentiation. Higher temperatures flatten the exp column; lower ones make the winning bar sharper.</div>"
+        )
+    else:
+        explainer = (
+            "<div class=\"waterfall-heading\"><strong>Softmax waterfall</strong> — track each token from raw logit through exponentiation to the final probability.</div>"
+        )
+
     return (
         "<div class=\"waterfall-wrapper\">"
-        "<div class=\"waterfall-heading\"><strong>Softmax waterfall</strong> — track each token from raw logit to final probability.</div>"
+        + explainer
         + "".join(rows)
         + "</div>"
     )
@@ -394,6 +507,11 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
     polyline_points = " ".join(points)
     final_token = generated_tokens[0] if generated_tokens else "the answer"
 
+    tick_labels = "".join(
+        f"<span class=\"sparkline-tick\" style=\"left:{padding + step * idx:.1f}px;\">{idx}</span>"
+        for idx in range(len(confidences))
+    )
+
     return (
         "<div class=\"sparkline-wrapper\">"
         "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong> — see how the model warmed up to"
@@ -402,6 +520,7 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
         f"<path d=\"M {area_points} Z\" class=\"sparkline-area\" />"
         f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
         "</svg>"
+        f"<div class=\"sparkline-axis\"><span class=\"sparkline-axis-label\">Layer →</span>{tick_labels}</div>"
         "</div>"
     )
 
@@ -491,6 +610,74 @@ def _render_feedback_delta(original_payload: dict, corrected_payload: dict) -> s
     )
 
 
+PIPELINE_STEPS = [
+    (
+        "Tokenise prompt",
+        "Split the question and any correction into tokens TinyLlama can read.",
+    ),
+    (
+        "Share context via attention",
+        "Each token looks back over the prompt to borrow the most relevant words.",
+    ),
+    (
+        "Refine through transformer layers",
+        "Feed-forward blocks reshape the focused context at every depth.",
+    ),
+    (
+        "Score candidates",
+        "The prediction head produces a logit score for every vocabulary option.",
+    ),
+    (
+        "Sample the next token",
+        "Softmax (plus the temperature slider) turns scores into the chosen answer.",
+    ),
+]
+
+
+def _build_pipeline_html(
+    completed_steps: int = 0,
+    active_step: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> str:
+    steps_html = []
+    for index, (title, description) in enumerate(PIPELINE_STEPS, start=1):
+        if index <= completed_steps:
+            status_class = "pipeline-step-done"
+            icon = "✓"
+        elif active_step is not None and index == active_step:
+            status_class = "pipeline-step-active"
+            icon = "…"
+        else:
+            status_class = "pipeline-step-pending"
+            icon = ""
+
+        steps_html.append(
+            "<li class=\"pipeline-step {status}\">".format(status=status_class)
+            + f"<span class=\"pipeline-check\">{icon}</span>"
+            + "<div class=\"pipeline-text\">"
+            + f"<span class=\"pipeline-step-label\">{html.escape(title)}</span>"
+            + f"<p>{html.escape(description)}</p>"
+            + "</div>"
+            + "</li>"
+        )
+
+    temperature_note = (
+        f"<p class=\"pipeline-temperature\">Temperature: <strong>{temperature:.2f}</strong> — lower keeps answers deterministic, higher spreads probability mass.</p>"
+        if temperature is not None
+        else ""
+    )
+
+    return (
+        "<div class=\"pipeline-card\">"
+        "<h4>Transformer pipeline checklist</h4>"
+        "<ol>"
+        + "".join(steps_html)
+        + "</ol>"
+        + temperature_note
+        + "</div>"
+    )
+
+
 THEORY_TEXT = {
     "overview": """
 ### How a transformer answers your question
@@ -554,9 +741,12 @@ What this means in practice:
 * All exponentiated scores are normalised by their sum so they form a true probability distribution.
 * Even small score gaps can create big probability differences, which is why the purple bars can look decisive.
 
+**Temperature control:** the slider divides logits by $T$ before applying softmax. Values below 1 sharpen the distribution (the winner steals more mass); values above 1 flatten it so alternatives stay in play.
+
+
 Sampling or temperature tweaks would flatten or sharpen these probabilities, but here we keep it simple so the behaviour stays interpretable.
 
-_Try it:_ read the purple bars first, then scroll to the waterfall to see the intermediate “exp” step that converts logits into those same percentages.
+_Try it:_ set a cool temperature (≈0.2) and a warm one (≈1.0), then compare the purple bars and the waterfall to see how the “exp” stage redistributes probability mass.
 """.strip(),
     "layers": """
 ### Why layer-by-layer probes are helpful
@@ -581,20 +771,34 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
 
     question = internals.get("question", "").strip() or "your question"
     answer = internals.get("response", "").strip() or internals.get("text", "")
+    temperature = internals.get("temperature")
 
     overview_lines = [
         "### How the model responded",
         f"It read **{html.escape(question)}** and proposed **{html.escape(answer or '...')}** as its next word.",
         "The tabs below unpack where it placed attention, how likely each candidate word looked, and how certainty grew across layers.",
     ]
+    if temperature is not None:
+        if temperature <= 0.35:
+            temp_descriptor = "a sharp, deterministic slate"
+        elif temperature >= 0.9:
+            temp_descriptor = "a very exploratory probability slate"
+        else:
+            temp_descriptor = "a balanced probability slate"
+        overview_lines.append(
+            f"Temperature was set to **{temperature:.2f}**, so expect {temp_descriptor}."
+        )
     if guidance_note:
         overview_lines.append(f"<div class='soft-note'>{guidance_note}</div>")
 
     attention_metrics, attention_html = _collect_attention_metrics(internals)
     softmax_metrics, softmax_html = _collect_softmax_metrics(internals)
     layer_metrics, layer_html = _collect_layer_metrics(internals, answer)
-    attention_heatmap_html = _render_attention_heatmap(internals.get("attention_heatmap"))
-    softmax_waterfall_html = _render_softmax_waterfall(softmax_metrics)
+    attention_heatmap_html = _render_attention_heatmap(internals.get("attention_heatmap"), internals)
+    softmax_waterfall_html = _render_softmax_waterfall(
+        softmax_metrics,
+        internals.get("temperature"),
+    )
     layer_sparkline_html = _render_layer_sparkline(layer_metrics, internals.get("generated_tokens", []))
 
     return {
@@ -777,7 +981,7 @@ def is_one_word_question(question: str) -> Tuple[bool, str]:
     return True, "Note: This works best with questions that have one-word answers (like 'What is X?' or 'Who is Y?')"
 
 
-def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, str]:
+def generate_one_word_answer(question: str, context: str = None, temperature: float = 0.2) -> Tuple[str, str]:
     """
     Generate one-word answer and show layer-by-layer predictions (logit lens).
 
@@ -787,6 +991,8 @@ def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, s
         The question to answer
     context : str, optional
         Additional context to prepend (e.g., "The answer is Green")
+    temperature : float, optional
+        Softmax temperature applied before sampling/logit lens visualisations
 
     Returns
     -------
@@ -806,7 +1012,12 @@ def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, s
     model = load_model()
 
     # Generate with layer-by-layer tracking
-    result = model.generate_one_word_with_layers(question, max_new_tokens=10, context=context)
+    result = model.generate_one_word_with_layers(
+        question,
+        max_new_tokens=10,
+        context=context,
+        temperature=temperature,
+    )
 
     # Check if answer is actually one word (3 tokens max for compound words)
     answer_word_count = len(result["response"].split())
@@ -897,100 +1108,200 @@ def main_interface():
             display: flex;
             flex-wrap: wrap;
             gap: 1.5rem;
-            align-items: flex-start;
+            align-items: stretch;
             justify-content: space-between;
         }
 
         .title-copy {
-            flex: 1 1 320px;
-            min-width: 280px;
+            flex: 1 1 360px;
+            min-width: 300px;
+        }
+
+        .title-heading {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
         .title-main {
-            font-size: 1.8rem;
+            font-size: 1.9rem;
             font-weight: 500;
             letter-spacing: -0.02em;
             color: #0f172a;
-            margin: 0 0 0.35rem 0;
+            margin: 0;
+        }
+
+        .usage-label {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #1e3a8a;
+            background: rgba(30, 58, 138, 0.12);
+            border: 1px solid rgba(30, 58, 138, 0.25);
+            padding: 0.35rem 0.6rem;
+            border-radius: 999px;
         }
 
         .title-subtitle {
-            font-size: 0.98rem;
-            color: #4b5563;
-            margin: 0 0 0.75rem 0;
+            font-size: 1rem;
+            color: #334155;
+            margin: 0.4rem 0 0.85rem 0;
             line-height: 1.6;
-            max-width: 34rem;
-        }
-
-        .usage-details {
-            background: rgba(37, 99, 235, 0.07);
-            border: 1px solid rgba(37, 99, 235, 0.15);
-            border-radius: 8px;
-            padding: 0.75rem 1rem;
-        }
-
-        .usage-details[open] {
-            box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
-        }
-
-        .usage-details summary {
-            font-weight: 600;
-            cursor: pointer;
-            color: #1d4ed8;
-            outline: none;
-        }
-
-        .usage-details summary::marker {
-            color: #1d4ed8;
+            max-width: 36rem;
         }
 
         .usage-body {
-            margin-top: 0.65rem;
+            background: rgba(30, 64, 175, 0.05);
+            border: 1px solid rgba(30, 64, 175, 0.1);
+            border-radius: 10px;
+            padding: 0.9rem 1.1rem;
             font-size: 0.92rem;
             color: #1f2937;
             line-height: 1.65;
         }
 
-        .usage-body ol {
-            margin: 0.5rem 0 0 1.25rem;
-            padding: 0;
+        .usage-steps {
+            margin: 0;
+            padding-left: 1.2rem;
         }
 
-        .usage-body li {
-            margin-bottom: 0.35rem;
+        .usage-steps > li {
+            margin-bottom: 0.55rem;
+        }
+
+        .usage-steps ul {
+            margin-top: 0.4rem;
+            padding-left: 1.1rem;
+            list-style: disc;
+        }
+
+        .usage-steps ul li {
+            margin-bottom: 0.25rem;
         }
 
         .usage-meta {
-            margin-top: 0.75rem;
+            margin-top: 0.85rem;
             font-size: 0.85rem;
             color: #475569;
         }
 
+        #pipeline-card {
+            flex: 0 1 280px;
+        }
+
         .pipeline-card {
-            flex: 0 1 240px;
-            background: rgba(20, 184, 166, 0.08);
-            border-radius: 10px;
-            border: 1px solid rgba(20, 184, 166, 0.2);
-            padding: 1rem 1.2rem;
-            box-shadow: inset 0 1px 1px rgba(14, 165, 233, 0.12);
+            height: 100%;
+            background: linear-gradient(180deg, rgba(14, 165, 233, 0.08) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 12px;
+            border: 1px solid rgba(14, 165, 233, 0.25);
+            padding: 1.1rem 1.25rem;
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.12);
         }
 
         .pipeline-card h4 {
-            margin: 0 0 0.6rem 0;
-            font-size: 0.95rem;
-            color: #0f172a;
+            margin: 0 0 0.75rem 0;
+            font-size: 1rem;
+            color: #075985;
         }
 
         .pipeline-card ol {
             margin: 0;
-            padding-left: 1.1rem;
-            font-size: 0.88rem;
-            color: #0f172a;
-            line-height: 1.45;
+            padding: 0;
+            list-style: none;
         }
 
-        .pipeline-card li {
-            margin-bottom: 0.35rem;
+        .pipeline-step {
+            display: flex;
+            gap: 0.6rem;
+            align-items: flex-start;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(14, 165, 233, 0.18);
+        }
+
+        .pipeline-step:last-child {
+            border-bottom: none;
+        }
+
+        .pipeline-check {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border: 1px solid rgba(14, 165, 233, 0.4);
+            color: rgba(14, 165, 233, 0.9);
+            flex-shrink: 0;
+        }
+
+        .pipeline-text {
+            flex: 1;
+        }
+
+        .pipeline-step-label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.92rem;
+            color: #0f172a;
+        }
+
+        .pipeline-text p {
+            margin: 0.25rem 0 0 0;
+            font-size: 0.85rem;
+            color: #1f2937;
+        }
+
+        .pipeline-step-done .pipeline-check {
+            background: rgba(14, 165, 233, 0.15);
+        }
+
+        .pipeline-step-active .pipeline-check {
+            background: rgba(14, 165, 233, 0.08);
+            color: #0284c7;
+            border-color: rgba(2, 132, 199, 0.6);
+        }
+
+        .pipeline-step-pending .pipeline-check {
+            background: rgba(255, 255, 255, 0.8);
+            color: rgba(14, 165, 233, 0.4);
+            border-style: dashed;
+        }
+
+        .pipeline-step-pending .pipeline-step-label {
+            color: #1f2937;
+            opacity: 0.75;
+        }
+
+        .pipeline-temperature {
+            margin: 0.8rem 0 0 0;
+            font-size: 0.82rem;
+            color: #075985;
+        }
+
+        #query-input-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: flex-end;
+        }
+
+        #query-input-row .gradio-textbox,
+        #query-input-row .gradio-slider {
+            flex: 1 1 280px;
+        }
+
+        #temperature-note {
+            font-size: 0.82rem;
+            color: #1d4ed8;
+            margin-top: 0.25rem;
+        }
+
+        #correction-note {
+            font-size: 0.82rem;
+            color: #1d4ed8;
+            margin: 0.35rem 0 0.65rem 0;
         }
 
         .prompt-summary {
@@ -1296,6 +1607,28 @@ def main_interface():
             min-width: 140px;
         }
 
+        .heatmap-source {
+            display: inline-block;
+            margin-right: 0.45rem;
+            padding: 0.1rem 0.35rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #7c2d12;
+            background: rgba(249, 115, 22, 0.15);
+        }
+
+        .heatmap-source-question {
+            color: #1e3a8a;
+            background: rgba(30, 58, 138, 0.1);
+        }
+
+        .heatmap-source-context {
+            color: #166534;
+            background: rgba(22, 101, 52, 0.12);
+        }
+
         .heatmap-value {
             font-weight: 500;
             color: #7c2d12;
@@ -1357,6 +1690,27 @@ def main_interface():
             stroke-width: 2;
         }
 
+        .sparkline-axis {
+            position: relative;
+            margin-top: 0.35rem;
+            padding-left: 24px;
+            font-size: 0.72rem;
+            color: #0f172a;
+        }
+
+        .sparkline-axis-label {
+            font-weight: 600;
+            margin-right: 0.5rem;
+        }
+
+        .sparkline-axis .sparkline-tick {
+            position: absolute;
+            bottom: -0.1rem;
+            transform: translateX(-50%);
+            font-size: 0.7rem;
+            color: #475569;
+        }
+
         .delta-wrapper {
             margin-top: 1.5rem;
             background: rgba(15, 23, 42, 0.02);
@@ -1412,38 +1766,39 @@ def main_interface():
         """
     ) as demo:
 
-        gr.HTML("""
-        <section class="title-section">
-            <div class="title-grid">
-                <div class="title-copy">
-                    <h1 class="title-main">LLM under the hood</h1>
-                    <p class="title-subtitle">Follow a compact transformer as it reads your question, weighs every word, and settles on a one-word reply.</p>
-                    <details class="usage-details">
-                        <summary>How to use this app</summary>
-                        <div class="usage-body">
-                            <p>Ask a short factual question, let the model answer once, then inspect each tab to see how it justified the choice.</p>
-                            <ol>
-                                <li>Start with a question like <em>What is the capital of Australia?</em></li>
-                                <li>Check Attention, Softmax, and Layers to understand the first attempt.</li>
-                                <li>Press <strong>That's Wrong</strong> or supply the correct token, then compare before vs. after.</li>
-                            </ol>
-                            <p class="usage-meta"><strong>Model:</strong> TinyLlama-1.1B · 22 transformer layers · ~2–5s per turn</p>
+        with gr.Column(elem_id="title-section"):
+            with gr.Row(elem_id="title-grid"):
+                gr.HTML(
+                    """
+                    <div class="title-copy">
+                        <div class="title-heading">
+                            <h1 class="title-main">LLM under the hood</h1>
+                            <span class="usage-label">How to use this app</span>
                         </div>
-                    </details>
-                </div>
-                <div class="pipeline-card">
-                    <h4>Transformer pipeline checklist</h4>
-                    <ol>
-                        <li><span>Tokenise prompt</span></li>
-                        <li><span>Share context via attention</span></li>
-                        <li><span>Refine through feed-forward layers</span></li>
-                        <li><span>Score candidates & apply softmax</span></li>
-                        <li><span>Sample the top token</span></li>
-                    </ol>
-                </div>
-            </div>
-        </section>
-        """)
+                        <p class="title-subtitle">Explore how TinyLlama reads your prompt, balances competing tokens, and incorporates feedback when you correct it.</p>
+                        <div class="usage-body">
+                            <ol class="usage-steps">
+                                <li>Ask a crisp factual question — the visualisations shine with single-word answers.</li>
+                                <li>Scan the Query tabs to match attention, probabilities, and layer confidence to the response.</li>
+                                <li>After the first try choose your feedback path:
+                                    <ul>
+                                        <li><strong>That's Wrong</strong> injects a gentle nudge that the answer missed the mark.</li>
+                                        <li><strong>Submit Correction</strong> after typing the exact word you expect.</li>
+                                    </ul>
+                                </li>
+                                <li>Adjust the <strong>Temperature</strong> slider before running to watch how hotter settings spread the softmax probabilities.</li>
+                            </ol>
+                        </div>
+                        <p class="usage-meta"><strong>Model:</strong> TinyLlama-1.1B · 22 transformer layers · ~2–5s per turn</p>
+                    </div>
+                    """,
+                    elem_id="title-copy",
+                )
+                pipeline_progress = gr.HTML(
+                    value="",
+                    visible=False,
+                    elem_id="pipeline-card",
+                )
 
         gr.HTML('<div class="section-divider"></div>')
 
@@ -1459,15 +1814,29 @@ def main_interface():
             with gr.Tab("Query"):
                 gr.Markdown("### Ask the model a quick fact")
                 gr.Markdown(
-                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word."
+                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word. Need more background? Jump to [Theory → Overview](#theory-overview)."
                 )
 
-                question_input = gr.Textbox(
-                    label="",
-                    placeholder="What is the capital of Australia?",
-                    lines=1,
-                    show_label=False,
-                    container=False
+                with gr.Row(elem_id="query-input-row"):
+                    question_input = gr.Textbox(
+                        label="Question",
+                        placeholder="What is the capital of Australia?",
+                        lines=1,
+                        show_label=True,
+                        container=False
+                    )
+                    temperature_slider = gr.Slider(
+                        label="Temperature",
+                        minimum=0.1,
+                        maximum=1.5,
+                        step=0.05,
+                        value=0.2,
+                        info="Lower = confident & deterministic · Higher = exploratory & diverse",
+                    )
+
+                gr.Markdown(
+                    "_Temperature rescales the logits before softmax. Lower values sharpen the winning token; higher values spread probability mass so near-miss words stay competitive._",
+                    elem_id="temperature-note",
                 )
 
                 generate_btn = gr.Button("Generate", variant="primary", size="sm")
@@ -1485,21 +1854,21 @@ def main_interface():
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
                         gr.Markdown(
-                            "Every word from your prompt and any added context appears here with an attention percentage so you can see what the model reread."
+                            "Every word from your prompt and any added context appears here with an attention percentage so you can see what the model reread. Read the primer in [Theory → Attention](#theory-attention)."
                         )
                         query_attention_panel = gr.HTML(empty_attention_html)
                         query_attention_heatmap = gr.HTML(empty_attention_heatmap)
 
                     with gr.Tab("🟣 Softmax"):
                         gr.Markdown(
-                            "Purple bars reveal the probability of the highest-scoring candidate words just before the model spoke."
+                            "Purple bars reveal the probability of the highest-scoring candidate words just before the model spoke. The waterfall pairs with [Theory → Softmax](#theory-softmax)."
                         )
                         query_softmax_panel = gr.HTML(empty_softmax_html)
                         query_softmax_waterfall = gr.HTML(empty_softmax_waterfall)
 
                     with gr.Tab("🔵 Layer by Layer"):
                         gr.Markdown(
-                            "Blue cards track how confidence in the final word grows as information flows through deeper transformer layers."
+                            "Blue cards track how confidence in the final word grows as information flows through deeper transformer layers. Compare what you see with [Theory → Layers](#theory-layers)."
                         )
                         query_layers_panel = gr.HTML(empty_layers_html)
                         query_layers_sparkline = gr.HTML(empty_layers_sparkline)
@@ -1521,6 +1890,11 @@ def main_interface():
                 )
 
                 correction_btn = gr.Button("Submit Correction", variant="secondary", size="sm")
+
+                gr.Markdown(
+                    "_Choose one path per turn: use **That's Wrong** when you just want the model to try again with a gentle nudge, or provide the exact word and press **Submit Correction** to steer it directly._",
+                    elem_id="correction-note",
+                )
 
                 correction_summary_md = gr.Markdown(correction_placeholder)
 
@@ -1547,29 +1921,41 @@ def main_interface():
                     "These notes explain the coloured panels in everyday language before linking them back to the underlying equations."
                 )
 
-                theory_overview_md = gr.Markdown(THEORY_TEXT["overview"])
-                theory_feedback_md = gr.Markdown(THEORY_TEXT["feedback"])
+                theory_overview_md = gr.Markdown(THEORY_TEXT["overview"], elem_id="theory-overview")
+                theory_feedback_md = gr.Markdown(THEORY_TEXT["feedback"], elem_id="theory-feedback")
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
-                        theory_attention_md = gr.Markdown(THEORY_TEXT["attention"])
+                        theory_attention_md = gr.Markdown(THEORY_TEXT["attention"], elem_id="theory-attention")
 
                     with gr.Tab("🟣 Softmax"):
-                        theory_softmax_md = gr.Markdown(THEORY_TEXT["softmax"])
+                        theory_softmax_md = gr.Markdown(THEORY_TEXT["softmax"], elem_id="theory-softmax")
 
                     with gr.Tab("🔵 Layer by Layer"):
-                        theory_layers_md = gr.Markdown(THEORY_TEXT["layers"])
+                        theory_layers_md = gr.Markdown(THEORY_TEXT["layers"], elem_id="theory-layers")
 
         # Event handlers
         # Store original answer to avoid re-generation
-        original_answer_cache: Dict[str, Dict[str, object]] = {}
+        original_answer_cache: Dict[Tuple[str, float], Dict[str, object]] = {}
 
-        def on_generate(question):
+        def _make_cache_key(question: str, temperature: float) -> Tuple[str, float]:
+            return (question.strip(), round(float(temperature), 3))
+
+        def on_generate_prepare(question: str, temperature: float):
+            if not question or not question.strip():
+                return gr.update(value="", visible=False)
+            return gr.update(
+                value=_build_pipeline_html(completed_steps=1, active_step=2, temperature=temperature),
+                visible=True,
+            )
+
+        def on_generate(question, temperature):
             """Generate answer and update all tabs."""
             if not question.strip():
                 return (
                     "Please enter a question!",
                     "_Ask something like “What is the capital of Australia?”_",
+                    gr.update(value="", visible=False),
                     empty_attention_html,
                     empty_attention_html,
                     empty_attention_heatmap,
@@ -1589,13 +1975,22 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
 
-            answer, payload = generate_one_word_answer(question)
+            answer, payload = generate_one_word_answer(question, temperature=temperature)
 
             if isinstance(payload, str):
                 # Error or guidance message
+                pipeline_update = (
+                    gr.update(value="", visible=False)
+                    if answer.startswith("❌")
+                    else gr.update(
+                        value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature),
+                        visible=True,
+                    )
+                )
                 return (
                     answer,
                     payload,
+                    pipeline_update,
                     empty_attention_html,
                     empty_attention_heatmap,
                     empty_softmax_html,
@@ -1614,7 +2009,13 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
 
-            original_answer_cache[question] = {
+            pipeline_update = gr.update(
+                value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature),
+                visible=True,
+            )
+
+            cache_key = _make_cache_key(question, temperature)
+            original_answer_cache[cache_key] = {
                 "answer": answer,
                 "payload": payload,
             }
@@ -1622,6 +2023,7 @@ def main_interface():
             return (
                 answer,
                 payload["overview"],
+                pipeline_update,
                 payload["attention"]["markdown"],
                 payload["attention"]["heatmap"],
                 payload["softmax"]["markdown"],
@@ -1633,17 +2035,30 @@ def main_interface():
                 payload["theory"]["attention"],
                 payload["theory"]["softmax"],
                 payload["theory"]["layers"],
-                "_Click “That’s Wrong” to see how feedback reshapes the internals._",
+                "_Use “That’s Wrong” for a quick retry or add the exact word and press “Submit Correction.”_",
                 "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
             )
 
-        def on_wrong_clicked(question):
+        def on_wrong_clicked(question, temperature):
             """Handle 'That's Wrong!' button - tell model its answer was wrong."""
-            if not question or question not in original_answer_cache:
+            stripped_question = (question or "").strip()
+            cache_key = _make_cache_key(stripped_question, temperature)
+            entry = original_answer_cache.get(cache_key)
+            if entry is None and stripped_question:
+                entry = next(
+                    (
+                        payload
+                        for (stored_question, _), payload in original_answer_cache.items()
+                        if stored_question == stripped_question
+                    ),
+                    None,
+                )
+            if not stripped_question or entry is None:
                 return (
+                    gr.update(value="", visible=False),
                     "⚠️ Please generate an answer first!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1651,15 +2066,20 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
 
-            original_entry = original_answer_cache[question]
+            original_entry = entry
             original_answer = original_entry["answer"]
             original_payload = original_entry["payload"]
 
             correction_context = f"{original_answer} is wrong, the right answer is"
-            corrected_answer, corrected_payload = generate_one_word_answer(question, context=correction_context)
+            corrected_answer, corrected_payload = generate_one_word_answer(
+                question,
+                context=correction_context,
+                temperature=temperature,
+            )
 
             if isinstance(corrected_payload, str):
                 return (
+                    gr.update(value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature), visible=True),
                     corrected_payload,
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1676,12 +2096,18 @@ def main_interface():
                 corrected_payload,
             )
 
-            return summary, attention_html, softmax_html, layers_html, delta_html
+            pipeline_update = gr.update(
+                value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature),
+                visible=True,
+            )
 
-        def on_correction(question, correction):
+            return pipeline_update, summary, attention_html, softmax_html, layers_html, delta_html
+
+        def on_correction(question, correction, temperature):
             """Handle manual correction with specific answer."""
             if not correction.strip():
                 return (
+                    gr.update(value="", visible=False),
                     "⚠️ Please enter a correction!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1689,8 +2115,21 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
 
-            if not question or question not in original_answer_cache:
+            stripped_question = (question or "").strip()
+            cache_key = _make_cache_key(stripped_question, temperature)
+            entry = original_answer_cache.get(cache_key)
+            if entry is None and stripped_question:
+                entry = next(
+                    (
+                        payload
+                        for (stored_question, _), payload in original_answer_cache.items()
+                        if stored_question == stripped_question
+                    ),
+                    None,
+                )
+            if not stripped_question or entry is None:
                 return (
+                    gr.update(value="", visible=False),
                     "⚠️ Please generate an answer first!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1698,15 +2137,20 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
 
-            original_entry = original_answer_cache[question]
+            original_entry = entry
             original_answer = original_entry["answer"]
             original_payload = original_entry["payload"]
 
             correction_context = f"{original_answer} is wrong, the right answer is {correction.strip()}"
-            corrected_answer, corrected_payload = generate_one_word_answer(question, context=correction_context)
+            corrected_answer, corrected_payload = generate_one_word_answer(
+                question,
+                context=correction_context,
+                temperature=temperature,
+            )
 
             if isinstance(corrected_payload, str):
                 return (
+                    gr.update(value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature), visible=True),
                     corrected_payload,
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1723,14 +2167,27 @@ def main_interface():
                 corrected_payload,
             )
 
-            return summary, attention_html, softmax_html, layers_html, delta_html
+            pipeline_update = gr.update(
+                value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature),
+                visible=True,
+            )
+
+            return pipeline_update, summary, attention_html, softmax_html, layers_html, delta_html
+
+        generate_btn.click(
+            fn=on_generate_prepare,
+            inputs=[question_input, temperature_slider],
+            outputs=[pipeline_progress],
+            queue=False,
+        )
 
         generate_btn.click(
             fn=on_generate,
-            inputs=[question_input],
+            inputs=[question_input, temperature_slider],
             outputs=[
                 response_output,
                 query_overview_md,
+                pipeline_progress,
                 query_attention_panel,
                 query_attention_heatmap,
                 query_softmax_panel,
@@ -1753,8 +2210,9 @@ def main_interface():
 
         wrong_btn.click(
             fn=on_wrong_clicked,
-            inputs=[question_input],
+            inputs=[question_input, temperature_slider],
             outputs=[
+                pipeline_progress,
                 correction_summary_md,
                 correction_attention_panel,
                 correction_softmax_panel,
@@ -1766,8 +2224,9 @@ def main_interface():
 
         correction_btn.click(
             fn=on_correction,
-            inputs=[question_input, correction_input],
+            inputs=[question_input, correction_input, temperature_slider],
             outputs=[
+                pipeline_progress,
                 correction_summary_md,
                 correction_attention_panel,
                 correction_softmax_panel,
