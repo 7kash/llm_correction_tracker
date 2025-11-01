@@ -500,10 +500,14 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
     padding = 24
     step = (width - 2 * padding) / max(1, len(confidences) - 1)
     points = []
+    circles = []
     for idx, prob in enumerate(confidences):
         x = padding + step * idx
         y = height - padding - (prob / 100.0) * (height - 2 * padding)
         points.append(f"{x:.1f},{y:.1f}")
+        circles.append(
+            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='4' class='sparkline-point' />"
+        )
 
     area_points = " ".join([f"{padding},{height - padding}"] + points + [f"{padding + step * (len(confidences) - 1):.1f},{height - padding}"])
     polyline_points = " ".join(points)
@@ -523,14 +527,15 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
 
     return (
         "<div class=\"sparkline-wrapper\">"
-        "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong> — see how the model warmed up to"
-        f" {_display_token(final_token)}.</div>"
+        "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong> — watch the model’s certainty climb layer by layer.</div>"
+        "<p class=\"sparkline-note\">Each dot is a transformer layer. The horizontal axis is the layer number; the vertical position shows the final answer’s probability at that layer.</p>"
         f"<svg viewBox=\"0 0 {width} {height}\" class=\"sparkline\">"
         f"<path d=\"M {area_points} Z\" class=\"sparkline-area\" />"
         f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
         f"<line x1='{padding}' y1='{axis_y}' x2='{axis_end:.1f}' y2='{axis_y}' class=\"sparkline-axis-line\" />"
         f"<text x='{axis_end:.1f}' y='{axis_y + 32}' class=\"sparkline-axis-caption\">Layer →</text>"
         f"{ticks_svg}"
+        f"{''.join(circles)}"
         "</svg>"
         "</div>"
     )
@@ -672,6 +677,28 @@ def _build_pipeline_html(
             + "</li>"
         )
 
+    if active_step is not None and 1 <= active_step <= len(PIPELINE_STEPS):
+        running_title = PIPELINE_STEPS[active_step - 1][0]
+        status_html = (
+            "<div class=\"pipeline-status pipeline-status-running\">"
+            "<span class=\"status-indicator\"></span>"
+            f"Running: {html.escape(running_title)}"
+            "</div>"
+        )
+    elif completed_steps >= len(PIPELINE_STEPS):
+        status_html = (
+            "<div class=\"pipeline-status pipeline-status-done\">"
+            "<span class=\"status-indicator\">✓</span>"
+            "Finished this turn."
+            "</div>"
+        )
+    else:
+        status_html = (
+            "<div class=\"pipeline-status pipeline-status-ready\">"
+            "<span class=\"status-indicator\"></span>Ready to run the transformer pipeline."
+            "</div>"
+        )
+
     temperature_note = (
         f"<p class=\"pipeline-temperature\">Temperature: <strong>{temperature:.2f}</strong> — lower keeps answers deterministic, higher spreads probability mass.</p>"
         if temperature is not None
@@ -680,8 +707,9 @@ def _build_pipeline_html(
 
     return (
         "<div class=\"pipeline-card\">"
-        "<h4>Transformer pipeline checklist</h4>"
-        "<ol>"
+        + "<h4>Transformer pipeline checklist</h4>"
+        + status_html
+        + "<ol>"
         + "".join(steps_html)
         + "</ol>"
         + temperature_note
@@ -695,7 +723,15 @@ THEORY_TEXT = {
 
 Large language models are enormous autocomplete engines. They slice your words into **tokens**, turn each token into numbers, and then predict which token should come next. Transformers are the clever architecture behind this trick: they let every token peek at the rest of the sentence, refine that shared context layer after layer, and finally choose the most promising next word.
 
-In linear algebra form, each token begins as a vector $\mathbf{x}$. Multiplying by learned matrices turns it into the internal signals the transformer needs: $\mathbf{q} = \mathbf{x} W_Q$ (query), $\mathbf{k} = \mathbf{x} W_K$ (key), and $\mathbf{v} = \mathbf{x} W_V$ (value). The following sections show where those vectors go next.
+In equation form, each token begins as a vector `x`. Multiplying by learned matrices turns it into the internal signals the transformer needs.
+
+```
+q = x × W_Q   # query: what the token is looking for
+k = x × W_K   # key: how much of that information the token contains
+v = x × W_V   # value: the payload the token can share
+```
+
+The following sections show where those vectors go next.
 
 **Why TinyLlama?** TinyLlama-1.1B is a small, open-source chat model with around 1.1 billion learned parameters. ChatGPT’s GPT-4 uses tens of billions, so GPT-4 is far more capable, but also far more opaque. TinyLlama’s modest size lets us inspect the exact attention weights, intermediate probabilities, and layer outputs without specialised tooling.
 
@@ -736,7 +772,14 @@ Attention is the model’s spotlight. Every token asks, “Which earlier words s
 2. The query compares itself with every key. After a quick scaling step, softmax turns those similarity scores into clear percentages that sum to 100.
 3. The token then blends the value vectors using those percentages, creating a custom summary of the prompt to guide the next prediction.
 
-Mathematically, those percentages come from two stages. First, we compare every pair of tokens: $\text{score}_{ij} = \frac{\mathbf{q}_i \cdot \mathbf{k}_j}{\sqrt{d_k}}$. Then we apply softmax to convert the scores into weights: $\alpha_{ij} = \frac{\exp(\text{score}_{ij})}{\sum_m \exp(\text{score}_{im})}$. The orange bars total $\alpha_{ij}$ for each prompt word, while the heatmap spreads the same weights across every generated token so you can see the detailed pattern.
+Mathematically, those percentages come from two stages. First, we compare every pair of tokens to produce a similarity score. Then we run softmax to convert those scores into weights that sum to 1.
+
+```
+score_ij = (q_i · k_j) / sqrt(d_k)
+weight_ij = exp(score_ij) / Σ_m exp(score_im)
+```
+
+The orange bars total the weights for each prompt word, while the heatmap spreads the same values across every generated token so you can trace the detailed pattern.
 
 The orange list shows the total percentage each prompt or context word contributed when TinyLlama chose the highlighted answer. The heatmap underneath breaks the same data down by generated token so you can trace exactly where the model looked for evidence.
 
@@ -748,10 +791,16 @@ _Try it:_ hover over a heatmap column to see which prompt word dominated that to
 By the time attention and the layers finish, TinyLlama has a **logit** score for every word in its vocabulary. Softmax is the final translator that turns those raw scores into real probabilities.
 
 1. **Adjust for temperature.** We divide each logit by the Temperature slider. Cooler temperatures (<1) exaggerate differences so the top word dominates; warmer temperatures (>1) smooth things out and keep more options alive.
-2. **Exponentiate.** Each adjusted logit goes through $e^{z}$, which blows up high scores and shrinks low ones.
+2. **Exponentiate.** Each adjusted logit goes through the exponential function `exp(z)`, which blows up high scores and shrinks low ones.
 3. **Normalise.** We divide by the sum of all exponentials so the probabilities add up to 100%.
 
-Written as an equation, the probability for token $i$ is $\text{softmax}_i(\mathbf{z}, T) = \dfrac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$, where $\mathbf{z}$ is the vector of logits and $T$ is the temperature. The purple panels plot each part of this formula so you can see how rescaling, exponentiating, and normalising change the odds.
+Written as an equation, the probability for token *i* looks like this:
+
+```
+softmax_i(z, T) = exp(z_i / T) / Σ_j exp(z_j / T)
+```
+
+`z` is the vector of logits and `T` is the temperature. The purple panels plot each part of this formula so you can see how rescaling, exponentiating, and normalising change the odds.
 
 The purple list shows the final probabilities for the leading candidates. The waterfall diagram follows those same tokens through the three stages so you can see where one option starts to sprint ahead. The “Other tokens” bar gathers the tail of the distribution so nothing is missing.
 
@@ -766,7 +815,13 @@ Transformers don’t make a decision in one jump. Each layer nudges the represen
 * **Middle layers** mix in attention results and start ruling out bad candidates.
 * **Late layers** push the winning token far ahead, making the probability curve shoot toward 100%.
 
-Under the hood, each layer updates the hidden state with a pattern such as $\mathbf{h}_{\ell+1} = \text{FFN}_\ell\big(\text{Attention}_\ell(\mathbf{h}_\ell)\big)$. Attention gathers context, and the feed-forward network (FFN) polishes that summary before passing it upward. The blue sparkline plots how the probability of the final word climbs as that recurrence unfolds.
+Under the hood, each layer updates the hidden state with a simple recipe:
+
+```
+h_(ℓ+1) = FFN_ℓ(Attention_ℓ(h_ℓ))
+```
+
+Attention gathers context, and the feed-forward network (FFN) polishes that summary before passing it upward. The blue sparkline plots how the probability of the final word climbs as that recurrence unfolds.
 
 The blue cards list the top competitors at each layer, and the sparkline plots how the probability of the actual answer rises as the layer number increases.
 
@@ -1205,6 +1260,50 @@ def main_interface():
             color: #075985;
         }
 
+        .pipeline-status {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            padding: 0.55rem 0.75rem;
+            border-radius: 10px;
+            margin-bottom: 0.65rem;
+            background: rgba(14, 165, 233, 0.1);
+            color: #0c4a6e;
+        }
+
+        .pipeline-status .status-indicator {
+            display: inline-flex;
+            width: 0.75rem;
+            height: 0.75rem;
+            border-radius: 50%;
+            background: #0ea5e9;
+            box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.45);
+        }
+
+        .pipeline-status-running .status-indicator {
+            animation: statusPulse 1.4s ease-out infinite;
+        }
+
+        .pipeline-status-ready .status-indicator {
+            background: rgba(14, 165, 233, 0.45);
+        }
+
+        .pipeline-status-done {
+            background: rgba(16, 185, 129, 0.12);
+            color: #065f46;
+        }
+
+        .pipeline-status-done .status-indicator {
+            width: auto;
+            height: auto;
+            background: transparent;
+            font-size: 0.95rem;
+            line-height: 1;
+            box-shadow: none;
+        }
+
         .pipeline-card ol {
             margin: 0;
             padding: 0;
@@ -1278,6 +1377,18 @@ def main_interface():
             margin: 0.8rem 0 0 0;
             font-size: 0.82rem;
             color: #075985;
+        }
+
+        @keyframes statusPulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.55);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(14, 165, 233, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+            }
         }
 
         #temperature-note {
@@ -1685,43 +1796,34 @@ def main_interface():
             stroke-width: 2;
         }
 
-        .sparkline-axis-line {
-            stroke: #94a3b8;
+        .sparkline-point {
+            fill: #0ea5e9;
+            stroke: #0c4a6e;
             stroke-width: 1;
         }
 
+        .sparkline-note {
+            margin: 0.4rem 0 0.6rem 0;
+            font-size: 0.85rem;
+            color: #1e293b;
+            line-height: 1.5;
+        }
+
+        .sparkline-axis-line {
+            stroke: #64748b;
+            stroke-width: 1.2;
+        }
+
         .sparkline-tick-mark {
-            stroke: #cbd5f5;
+            stroke: rgba(148, 163, 184, 0.85);
             stroke-width: 1;
         }
 
         .sparkline-tick-label {
             font-size: 1rem;
-            fill: #475569;
+            fill: #0f172a;
             text-anchor: middle;
             dominant-baseline: hanging;
-        }
-
-        .theory-highlight {
-            position: relative;
-            animation: theory-pulse 1.4s ease-out;
-            box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.65);
-            background: rgba(191, 219, 254, 0.25);
-        }
-
-        @keyframes theory-pulse {
-            0% {
-                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.9);
-                background: rgba(191, 219, 254, 0.55);
-            }
-            60% {
-                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.4);
-                background: rgba(191, 219, 254, 0.3);
-            }
-            100% {
-                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.15);
-                background: rgba(191, 219, 254, 0.15);
-            }
         }
 
         [data-testid="status"] {
@@ -1729,8 +1831,8 @@ def main_interface():
         }
 
         .sparkline-axis-caption {
-            font-size: 0.7rem;
-            fill: #475569;
+            font-size: 0.85rem;
+            fill: #0f172a;
             text-anchor: end;
             font-weight: 600;
         }
@@ -1837,7 +1939,7 @@ def main_interface():
             with gr.Tab("Query"):
                 gr.Markdown("### Ask the model a quick fact")
                 gr.Markdown(
-                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word. Want the full story? 📘 [Read the overview theory](#theory-overview)."
+                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word. Want the full story? Explore the Theory tab for the complete walkthrough."
                 )
 
                 question_input = gr.Textbox(
@@ -1877,21 +1979,21 @@ def main_interface():
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
                         gr.Markdown(
-                            "**Attention** is how the model decides which prompt words to re-read before speaking. The orange bars total the attention percentage for each prompt or context word when choosing the highlighted answer, and the heatmap spreads the very same percentages across every generated token. 📘 [Open the attention theory](#theory-attention)."
+                            "**Attention** is how the model decides which prompt words to re-read before speaking. The orange bars total the attention percentage for each prompt or context word when choosing the highlighted answer, and the heatmap spreads the very same percentages across every generated token. Check the Theory tab’s Attention section for a deeper explanation."
                         )
                         query_attention_panel = gr.HTML(empty_attention_html)
                         query_attention_heatmap = gr.HTML(empty_attention_heatmap)
 
                     with gr.Tab("🟣 Softmax"):
                         gr.Markdown(
-                            "**Softmax** is the final conversion from raw scores to real probabilities. The purple list shows the top candidates after normalisation, while the waterfall tracks how each token’s logit grows into an exponential and then a probability. 📘 [Open the softmax theory](#theory-softmax)."
+                            "**Softmax** is the final conversion from raw scores to real probabilities. The purple list shows the top candidates after normalisation, while the waterfall tracks how each token’s logit grows into an exponential and then a probability. Check the Theory tab’s Softmax section for a deeper explanation."
                         )
                         query_softmax_panel = gr.HTML(empty_softmax_html)
                         query_softmax_waterfall = gr.HTML(empty_softmax_waterfall)
 
                     with gr.Tab("🔵 Layer by Layer"):
                         gr.Markdown(
-                            "Transformer **layers** are stacked reasoning steps. The blue cards sample the top alternatives after each layer’s update, and the sparkline plots how confident the model becomes in the final answer as the layer number increases. 📘 [Open the layer theory](#theory-layers)."
+                            "Transformer **layers** are stacked reasoning steps. The blue cards sample the top alternatives after each layer’s update, and the sparkline plots how confident the model becomes in the final answer as the layer number increases. Check the Theory tab’s Layer-by-layer section for more detail."
                         )
                         query_layers_panel = gr.HTML(empty_layers_html)
                         query_layers_sparkline = gr.HTML(empty_layers_sparkline)
@@ -1899,7 +2001,7 @@ def main_interface():
             with gr.Tab("Correction"):
                 gr.Markdown("### Teach the model when it slips")
                 gr.Markdown(
-                    "Challenge the answer and optionally provide the correct word. The comparison panels show exactly how the internal signals respond to your feedback. 📘 [See why feedback matters](#theory-feedback)."
+                    "Challenge the answer and optionally provide the correct word. The comparison panels show exactly how the internal signals respond to your feedback. See the Feedback notes in the Theory tab for the reasoning behind this flow."
                 )
 
                 wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm")
@@ -1923,19 +2025,19 @@ def main_interface():
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
-                        gr.Markdown("See how the attention mechanism reweights your prompt or context words after feedback. The twin bar charts and heatmaps show the exact percentage shifts before and after your hint. 📘 [Revisit the attention theory](#theory-attention).")
+                        gr.Markdown("See how the attention mechanism reweights your prompt or context words after feedback. The twin bar charts and heatmaps show the exact percentage shifts before and after your hint. Revisit the Attention notes in the Theory tab if you’d like more context.")
                         correction_attention_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("Check whether the corrected word overtakes its competitors once softmax recomputes the probabilities with your hint in mind. 📘 [Revisit the softmax theory](#theory-softmax).")
+                        gr.Markdown("Check whether the corrected word overtakes its competitors once softmax recomputes the probabilities with your hint in mind. Revisit the Softmax notes in the Theory tab if you’d like more context.")
                         correction_softmax_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Look for deeper layers to embrace the corrected answer sooner or with greater certainty. The cards and sparkline reveal where in the stack the change really takes hold. 📘 [Revisit the layer theory](#theory-layers).")
+                        gr.Markdown("Look for deeper layers to embrace the corrected answer sooner or with greater certainty. The cards and sparkline reveal where in the stack the change really takes hold. Revisit the Layer-by-layer notes in the Theory tab if you’d like more context.")
                         correction_layers_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("Δ Impact"):
-                        gr.Markdown("Read this tab for the biggest attention, probability, and layer shifts triggered by your feedback. 📘 [Review the feedback theory](#theory-feedback).")
+                        gr.Markdown("Read this tab for the biggest attention, probability, and layer shifts triggered by your feedback. See the Feedback section in the Theory tab for a detailed breakdown.")
                         correction_delta_panel = gr.HTML("<em>No comparison yet.</em>")
 
             with gr.Tab("Theory"):
@@ -1956,115 +2058,6 @@ def main_interface():
 
                     with gr.Tab("🔵 Layer by Layer"):
                         theory_layers_md = gr.Markdown(THEORY_TEXT["layers"], elem_id="theory-layers")
-
-        gr.HTML(
-            """
-            <script>
-            (function () {
-                function getAppRoot() {
-                    if (window.gradioApp) {
-                        const appEl = window.gradioApp();
-                        if (appEl) {
-                            return appEl.shadowRoot || appEl;
-                        }
-                    }
-                    return document;
-                }
-
-                function cssEscapeId(value) {
-                    if (window.CSS && CSS.escape) {
-                        return CSS.escape(value);
-                    }
-                    return value.replace(/[^a-zA-Z0-9_-]/g, "");
-                }
-
-                function focusTheory(targetId) {
-                    const root = getAppRoot();
-                    if (!root) {
-                        return;
-                    }
-
-                    const theoryButton = Array.from(root.querySelectorAll("button"))
-                        .find((btn) => btn.textContent && btn.textContent.trim() === "Theory");
-                    if (theoryButton) {
-                        theoryButton.click();
-                    }
-
-                    const innerTabLabels = {
-                        "theory-attention": "🟠 Attention",
-                        "theory-softmax": "🟣 Softmax",
-                        "theory-layers": "🔵 Layer by Layer",
-                    };
-
-                    const innerLabel = innerTabLabels[targetId];
-                    if (innerLabel) {
-                        setTimeout(() => {
-                            const innerButton = Array.from(root.querySelectorAll("button"))
-                                .find((btn) => btn.textContent && btn.textContent.trim().startsWith(innerLabel));
-                            if (innerButton) {
-                                innerButton.click();
-                            }
-                        }, 60);
-                    }
-
-                    setTimeout(() => {
-                        const selector = "#" + cssEscapeId(targetId);
-                        const section = root.querySelector(selector);
-                        if (section && section.scrollIntoView) {
-                            section.scrollIntoView({ behavior: "smooth", block: "start" });
-                            section.classList.add("theory-highlight");
-                            setTimeout(() => section.classList.remove("theory-highlight"), 1800);
-                        }
-                        if (targetId) {
-                            window.location.hash = "#" + targetId;
-                        }
-                    }, 120);
-                }
-
-                function bindTheoryLinks(root) {
-                    if (!root || root.__theoryLinksHooked) {
-                        return;
-                    }
-                    root.__theoryLinksHooked = true;
-                    root.addEventListener("click", function (event) {
-                        const anchor = event.target.closest('a[href^="#theory-"]');
-                        if (!anchor) {
-                            return;
-                        }
-                        const targetId = anchor.getAttribute("href").slice(1);
-                        if (!targetId) {
-                            return;
-                        }
-                        event.preventDefault();
-                        focusTheory(targetId);
-                    });
-                }
-
-                function init() {
-                    const root = getAppRoot();
-                    if (root) {
-                        bindTheoryLinks(root);
-                    }
-                }
-
-                if (document.readyState === "loading") {
-                    document.addEventListener("DOMContentLoaded", init);
-                } else {
-                    init();
-                }
-
-                const observer = new MutationObserver(() => {
-                    const root = getAppRoot();
-                    if (root) {
-                        bindTheoryLinks(root);
-                    }
-                });
-                observer.observe(document, { childList: true, subtree: true });
-            })();
-            </script>
-            """,
-            elem_id="theory-link-script",
-        )
 
         # Event handlers
         # Store original answer to avoid re-generation
