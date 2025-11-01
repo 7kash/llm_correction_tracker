@@ -13,7 +13,7 @@ import re
 import time
 
 import gradio as gr
-from typing import List, Tuple, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.llm_with_internals import LLMWithInternals
 from visualizations.answer_flow import get_clean_words, clean_token
@@ -1935,7 +1935,7 @@ def main_interface():
                 visible=True,
             )
 
-        def _progress_stub() -> List[gr.Update]:
+        def _progress_stub() -> List[Any]:
             return [gr.update() for _ in range(19)]
 
         def on_temperature_change(temperature: float):
