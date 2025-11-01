@@ -506,15 +506,6 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
         points.append(f"{x:.1f},{y:.1f}")
 
     polyline_points = " ".join(points)
-    axis_y = height - padding
-    axis_end = padding + step * max(1, len(confidences) - 1)
-    tick_labels = []
-    for idx in range(len(confidences)):
-        x = padding + step * idx
-        tick_labels.append(
-            f"<text x='{x:.1f}' y='{axis_y + 14}' class='sparkline-tick-label'>{idx}</text>"
-        )
-    ticks_svg = "".join(tick_labels)
     final_token = generated_tokens[0] if generated_tokens else "the answer"
 
     return (
@@ -522,8 +513,6 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
         "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong></div>"
         f"<svg viewBox=\"0 0 {width} {height}\" class=\"sparkline\">"
         f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
-        f"<line x1='{padding}' y1='{axis_y}' x2='{axis_end:.1f}' y2='{axis_y}' class=\"sparkline-axis\" />"
-        f"{ticks_svg}"
         "</svg>"
         f"<p class=\"sparkline-note\">Probability of {final_token} after each transformer layer. Watch the line climb as the model commits to the answer.</p>"
         "</div>"
@@ -1781,17 +1770,6 @@ def main_interface():
             stroke-width: 2.5;
             stroke-linejoin: round;
             stroke-linecap: round;
-        }
-
-        .sparkline-axis {
-            stroke: rgba(15, 23, 42, 0.4);
-            stroke-width: 1;
-        }
-
-        .sparkline-tick-label {
-            fill: #0f172a;
-            text-anchor: middle;
-            dominant-baseline: hanging;
         }
 
         .sparkline-note {
