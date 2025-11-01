@@ -2,42 +2,20 @@
 LLM Inference Tracker - Gradio App
 
 Track how LLMs change their responses when corrected, with visualizations
-of internal mechanisms: attention, layer trajectories, and logit lens.
+of internal mechanisms: attention, softmax, and layer-by-layer predictions.
 
 Deployment: Hugging Face Spaces
 """
 
 import gradio as gr
-import numpy as np
 from typing import List, Tuple, Optional, Dict
-import matplotlib.pyplot as plt
 
 from backend.llm_with_internals import LLMWithInternals
-from visualizations.attention_rollout import (
-    plot_attention_rollout,
-    get_top_contributors
-)
-from visualizations.layer_trajectory import (
-    plot_layer_trajectory,
-    compare_trajectories_before_after
-)
-from visualizations.logit_lens import (
-    plot_logit_lens_heatmap,
-    plot_token_probability_evolution,
-    get_top_k_per_layer,
-    analyze_layer_shift
-)
-from visualizations.answer_flow import (
-    create_answer_generation_flow,
-    analyze_word_importance,
-    get_clean_words,
-    clean_token
-)
+from visualizations.answer_flow import get_clean_words, clean_token
 
 
 # Global model instance (loaded once)
 MODEL = None
-SESSION_HISTORY = []  # List of (question, response, internals) tuples
 
 
 def load_model():
@@ -48,55 +26,6 @@ def load_model():
         MODEL = LLMWithInternals(model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0")
         print("✅ Model ready!")
     return MODEL
-
-
-def get_vocab_list():
-    """
-    Get vocabulary as a list indexed by token ID.
-
-    Returns
-    -------
-    list[str] where vocab[token_id] = token_string
-    """
-    vocab_dict = MODEL.tokenizer.get_vocab()
-    vocab_size = len(vocab_dict)
-    vocab = [""] * vocab_size
-    for token_str, token_id in vocab_dict.items():
-        vocab[token_id] = token_str
-    return vocab
-
-
-def generate_response(
-    question: str,
-    max_tokens: int = 50,
-    temperature: float = 0.7
-) -> Tuple[str, dict]:
-    """
-    Generate response with internals extraction.
-
-    Returns
-    -------
-    response_text : str
-    internals : dict with attention, hidden_states, logits, etc.
-    """
-    model = load_model()
-
-    # Build history from session
-    history = [(q, r) for q, r, _ in SESSION_HISTORY] if SESSION_HISTORY else None
-
-    # Generate with internals
-    result = model.generate_with_internals(
-        question=question,
-        history=history,
-        max_new_tokens=max_tokens,
-        temperature=temperature,
-        do_sample=True
-    )
-
-    # Store in session
-    SESSION_HISTORY.append((question, result["response"], result))
-
-    return result["response"], result
 
 
 def _format_percentage_bar(label: str, value: float, color_var: str, max_items: int = 8) -> str:
@@ -555,109 +484,6 @@ def generate_one_word_answer(question: str, context: str = None) -> Tuple[str, s
     payload = build_visualization_payload(result, guidance_note=message)
 
     return result["response"], payload
-
-
-def create_turn_summary(internals: dict, previous_internals: Optional[dict] = None) -> str:
-    """
-    Create answer generation flow visualization.
-
-    Returns Markdown-formatted text.
-    """
-    vocab = get_vocab_list()
-    return create_answer_generation_flow(internals, vocab)
-
-
-def visualize_attention(turn_index: int) -> plt.Figure:
-    """Create attention rollout visualization for a specific turn."""
-    if turn_index >= len(SESSION_HISTORY):
-        return None
-
-    _, _, internals = SESSION_HISTORY[turn_index]
-
-    # Get tokens and attention
-    all_tokens = internals["input_tokens"] + internals["tokens"]
-    attentions = internals["attentions"]
-
-    # Create visualization
-    fig = plot_attention_rollout(
-        attentions,
-        tokens=all_tokens,
-        target_pos=-1,
-        top_k=min(7, len(all_tokens)),
-        residual_alpha=0.6
-    )
-
-    return fig
-
-
-def visualize_trajectories(turn_index: int, token_to_track: Optional[str] = None) -> plt.Figure:
-    """Create layer trajectory visualization."""
-    if turn_index >= len(SESSION_HISTORY):
-        return None
-
-    _, _, internals = SESSION_HISTORY[turn_index]
-
-    # If comparing with previous turn
-    if turn_index > 0 and token_to_track:
-        _, _, prev_internals = SESSION_HISTORY[turn_index - 1]
-
-        # For simplicity, use the final token's hidden states
-        fig = compare_trajectories_before_after(
-            hidden_before=prev_internals["hidden_states"],
-            hidden_after=internals["hidden_states"],
-            token_name=token_to_track or "last_token"
-        )
-    else:
-        # Single trajectory
-        fig = plot_layer_trajectory(
-            internals["hidden_states"],
-            token_name=token_to_track or "last_token"
-        )
-
-    return fig
-
-
-def visualize_logit_lens(turn_index: int, mode: str = "heatmap") -> plt.Figure:
-    """Create logit lens visualization."""
-    if turn_index >= len(SESSION_HISTORY):
-        return None
-
-    _, _, internals = SESSION_HISTORY[turn_index]
-
-    logits = internals["logits_per_layer"]
-    vocab = get_vocab_list()
-
-    if mode == "heatmap":
-        tokens_per_layer, probs_per_layer = get_top_k_per_layer(
-            logits, vocab, k=5, temperature=1.0
-        )
-        fig = plot_logit_lens_heatmap(tokens_per_layer, probs_per_layer)
-
-    elif mode == "evolution":
-        # Track specific tokens (for now, just show top 3 from final layer)
-        final_probs = np.exp(logits[-1] - logits[-1].max())
-        final_probs /= final_probs.sum()
-        top_idx = np.argsort(final_probs)[-3:][::-1]
-        tokens_to_track = [vocab[i] for i in top_idx]
-
-        fig = plot_token_probability_evolution(
-            logits, vocab, tokens_to_track, temperature=1.0
-        )
-
-    return fig
-
-
-def reset_session():
-    """Clear session history."""
-    global SESSION_HISTORY
-    SESSION_HISTORY = []
-    return {
-        "response": "",
-        "summary": "_Ask a question to see how the model forms its answer through layers!_",
-        "correction_input": gr.update(visible=False, value=""),
-        "correction_btn": gr.update(visible=False),
-        "comparison": gr.update(visible=False, value="")
-    }
 
 
 # ============================================================================
