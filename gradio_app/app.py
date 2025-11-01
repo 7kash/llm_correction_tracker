@@ -152,7 +152,8 @@ def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
     for item in softmax_example:
         token = item.get("token", "?")
         prob = float(item.get("probability", 0.0)) * 100
-        logit = float(item.get("logit", 0.0))
+        raw_logit = item.get("logit")
+        logit = float(raw_logit) if raw_logit is not None else None
         cleaned = clean_token(token)
         if cleaned:
             token_display, _ = cleaned
@@ -164,15 +165,36 @@ def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
             "prob": prob,
             "logit": logit,
         })
-        bar_width = min(100, int(prob))
+        bar_width = min(100, int(round(prob)))
+        logit_text = f"logit {logit:+.2f}" if logit is not None else "—"
         rows.append(
             "<div class=\"metric-row\">"
             f"<span class=\"metric-label\">{token_display}</span>"
-            f"<span class=\"metric-logit\">logit {logit:+.2f}</span>"
+            f"<span class=\"metric-logit\">{logit_text}</span>"
             "<div class=\"metric-track\">"
             f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var(--softmax-color);\"></div>"
             "</div>"
             f"<span class=\"metric-value\">{prob:.1f}%</span>"
+            "</div>"
+        )
+
+    total_prob = sum(entry["prob"] for entry in items)
+    remainder = max(0.0, 100.0 - total_prob)
+    if remainder > 0.05:
+        bar_width = min(100, int(round(remainder)))
+        items.append({
+            "token": "Other tokens",
+            "prob": remainder,
+            "logit": None,
+        })
+        rows.append(
+            "<div class=\"metric-row\">"
+            "<span class=\"metric-label\">Other tokens</span>"
+            "<span class=\"metric-logit\">—</span>"
+            "<div class=\"metric-track\">"
+            f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var(--softmax-color);\"></div>"
+            "</div>"
+            f"<span class=\"metric-value\">{remainder:.1f}%</span>"
             "</div>"
         )
 
@@ -615,8 +637,8 @@ def main_interface():
 
         .title-section {
             text-align: center;
-            padding: 1.25rem 2rem 2rem 2rem;
-            margin-bottom: 2.5rem;
+            padding: 0.85rem 1.75rem 1.4rem 1.75rem;
+            margin-bottom: 1.75rem;
             background: linear-gradient(180deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
             border-radius: 8px;
         }
@@ -655,8 +677,8 @@ def main_interface():
 
         .guide-inline {
             background: var(--surface-blue);
-            padding: 1.75rem;
-            margin: 2.5rem auto;
+            padding: 1.35rem 1.5rem;
+            margin: 1.5rem auto;
             font-size: 0.95rem;
             color: #1f2937;
             line-height: 1.75;
@@ -666,8 +688,12 @@ def main_interface():
             box-shadow: inset 0 1px 2px rgba(37, 99, 235, 0.08);
         }
 
+        .guide-inline p {
+            margin: 0 0 0.5rem 0;
+        }
+
         .guide-inline ol {
-            margin: 0.75rem 0 0 1.25rem;
+            margin: 0.25rem 0 0 1.25rem;
             padding: 0;
         }
 
@@ -678,7 +704,7 @@ def main_interface():
         .section-divider {
             height: 1px;
             background: rgba(15, 23, 42, 0.08);
-            margin: 3rem 0;
+            margin: 1.75rem 0;
         }
 
         /* Smaller buttons */
@@ -899,16 +925,14 @@ def main_interface():
 
         gr.HTML("""
         <div class="guide-inline">
-            <strong>How to explore:</strong> Ask a short factual question whose answer should be a single word, then study how the model handled it in each tab.
-            <br><br>
-            <strong>Recommended flow:</strong>
+            <p><strong>How to explore:</strong> Ask a short factual question whose answer should be a single word, then study how the model handled it in each tab.</p>
+            <p><strong>Recommended flow:</strong></p>
             <ol>
                 <li>Run a question such as "What color is banana?" and note the answer.</li>
                 <li>Inspect the Query tabs to see which words mattered, which candidates competed, and how confidence grew.</li>
                 <li>Use <em>That's Wrong</em> or add the true word, then compare how the internals shift after feedback.</li>
             </ol>
-            <br>
-            <strong>Model:</strong> TinyLlama-1.1B (22 transformer layers, ~2-5 seconds per response)
+            <p><strong>Model:</strong> TinyLlama-1.1B (22 transformer layers, ~2-5 seconds per response)</p>
         </div>
         """)
 
