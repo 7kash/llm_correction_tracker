@@ -148,7 +148,24 @@ def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]]
 
     source_column: List[float] = []
     if values:
-        source_column = [float(x) for x in values[0]]
+        final_indices: List[int] = []
+        output_tokens = heatmap.get("output_tokens") or []
+        output_words = list(get_clean_words(output_tokens))
+        if output_words:
+            final_indices = output_words[-1][1]
+        if not final_indices and values:
+            final_indices = [len(values) - 1]
+
+        max_prompt_len = max((len(values[idx]) for idx in final_indices if 0 <= idx < len(values)), default=0)
+        if max_prompt_len:
+            source_column = [0.0] * max_prompt_len
+            for output_idx in final_indices:
+                if output_idx < 0 or output_idx >= len(values):
+                    continue
+                column = values[output_idx]
+                for prompt_idx, score in enumerate(column):
+                    if prompt_idx < len(source_column):
+                        source_column[prompt_idx] += float(score)
 
     if source_column:
         for row in rows:
@@ -158,10 +175,6 @@ def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]]
                     total_attention += source_column[idx]
                     seen_indices.add(idx)
             add_metric(row["label"], total_attention, row["source"])
-
-        remainder = sum(source_column[idx] for idx in range(len(source_column)) if idx not in seen_indices)
-        if remainder > 0.1:
-            add_metric("Other prompt tokens", remainder, "Prompt")
     elif attention_percentages:
         for row in rows:
             total_attention = 0.0
@@ -170,14 +183,6 @@ def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]]
                     total_attention += float(attention_percentages[idx])
                     seen_indices.add(idx)
             add_metric(row["label"], total_attention, row["source"])
-
-        remainder = sum(
-            float(attention_percentages[idx])
-            for idx in range(len(attention_percentages))
-            if idx not in seen_indices
-        )
-        if remainder > 0.1:
-            add_metric("Other prompt tokens", remainder, "Prompt")
     else:
         return [], prompt_html + "_Attention data is not available for this turn yet._"
 
@@ -685,10 +690,12 @@ def _build_pipeline_html(
 
 
 THEORY_TEXT = {
-    "overview": """
+    "overview": r"""
 ### Transformers in plain language
 
 Large language models are enormous autocomplete engines. They slice your words into **tokens**, turn each token into numbers, and then predict which token should come next. Transformers are the clever architecture behind this trick: they let every token peek at the rest of the sentence, refine that shared context layer after layer, and finally choose the most promising next word.
+
+In linear algebra form, each token begins as a vector $\mathbf{x}$. Multiplying by learned matrices turns it into the internal signals the transformer needs: $\mathbf{q} = \mathbf{x} W_Q$ (query), $\mathbf{k} = \mathbf{x} W_K$ (key), and $\mathbf{v} = \mathbf{x} W_V$ (value). The following sections show where those vectors go next.
 
 **Why TinyLlama?** TinyLlama-1.1B is a small, open-source chat model with around 1.1 billion learned parameters. ChatGPT’s GPT-4 uses tens of billions, so GPT-4 is far more capable, but also far more opaque. TinyLlama’s modest size lets us inspect the exact attention weights, intermediate probabilities, and layer outputs without specialised tooling.
 
@@ -720,7 +727,7 @@ The Δ Impact tab condenses those differences so you can compare “before” an
 
 _Try it:_ run a question, press **That’s Wrong**, and check how the attention bars change. Then supply the right word and press **Submit Correction** to see the layers and probabilities snap toward your goal.
 """.strip(),
-    "attention": """
+    "attention": r"""
 ### How attention works
 
 Attention is the model’s spotlight. Every token asks, “Which earlier words should I reread before I speak?”
@@ -729,11 +736,13 @@ Attention is the model’s spotlight. Every token asks, “Which earlier words s
 2. The query compares itself with every key. After a quick scaling step, softmax turns those similarity scores into clear percentages that sum to 100.
 3. The token then blends the value vectors using those percentages, creating a custom summary of the prompt to guide the next prediction.
 
+Mathematically, those percentages come from two stages. First, we compare every pair of tokens: $\text{score}_{ij} = \frac{\mathbf{q}_i \cdot \mathbf{k}_j}{\sqrt{d_k}}$. Then we apply softmax to convert the scores into weights: $\alpha_{ij} = \frac{\exp(\text{score}_{ij})}{\sum_m \exp(\text{score}_{im})}$. The orange bars total $\alpha_{ij}$ for each prompt word, while the heatmap spreads the same weights across every generated token so you can see the detailed pattern.
+
 The orange list shows the total percentage each prompt or context word contributed when TinyLlama chose the highlighted answer. The heatmap underneath breaks the same data down by generated token so you can trace exactly where the model looked for evidence.
 
 _Try it:_ hover over a heatmap column to see which prompt word dominated that token, then find the same word’s overall percentage in the bar chart.
 """.strip(),
-    "softmax": """
+    "softmax": r"""
 ### How softmax turns scores into probabilities
 
 By the time attention and the layers finish, TinyLlama has a **logit** score for every word in its vocabulary. Softmax is the final translator that turns those raw scores into real probabilities.
@@ -742,11 +751,13 @@ By the time attention and the layers finish, TinyLlama has a **logit** score for
 2. **Exponentiate.** Each adjusted logit goes through $e^{z}$, which blows up high scores and shrinks low ones.
 3. **Normalise.** We divide by the sum of all exponentials so the probabilities add up to 100%.
 
+Written as an equation, the probability for token $i$ is $\text{softmax}_i(\mathbf{z}, T) = \dfrac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$, where $\mathbf{z}$ is the vector of logits and $T$ is the temperature. The purple panels plot each part of this formula so you can see how rescaling, exponentiating, and normalising change the odds.
+
 The purple list shows the final probabilities for the leading candidates. The waterfall diagram follows those same tokens through the three stages so you can see where one option starts to sprint ahead. The “Other tokens” bar gathers the tail of the distribution so nothing is missing.
 
 _Try it:_ run a question at temperature 0.2 and again at 1.0. Watch the middle “exp” column: when the temperature is higher the bars are closer together, and the final probabilities spread out accordingly.
 """.strip(),
-    "layers": """
+    "layers": r"""
 ### Why layer-by-layer probes matter
 
 Transformers don’t make a decision in one jump. Each layer nudges the representation a little closer to the final answer. By attaching the prediction head to every layer—a technique nicknamed the **logit lens**—we can see how confident the model would be if it stopped early.
@@ -754,6 +765,8 @@ Transformers don’t make a decision in one jump. Each layer nudges the represen
 * **Early layers** mostly identify the topic, so the right word might barely lead.
 * **Middle layers** mix in attention results and start ruling out bad candidates.
 * **Late layers** push the winning token far ahead, making the probability curve shoot toward 100%.
+
+Under the hood, each layer updates the hidden state with a pattern such as $\mathbf{h}_{\ell+1} = \text{FFN}_\ell\big(\text{Attention}_\ell(\mathbf{h}_\ell)\big)$. Attention gathers context, and the feed-forward network (FFN) polishes that summary before passing it upward. The blue sparkline plots how the probability of the final word climbs as that recurrence unfolds.
 
 The blue cards list the top competitors at each layer, and the sparkline plots how the probability of the actual answer rises as the layer number increases.
 
@@ -1129,7 +1142,7 @@ def main_interface():
             border: 1px solid rgba(30, 58, 138, 0.25);
             padding: 0.35rem 0.6rem;
             border-radius: 999px;
-            margin-bottom: 0.55rem;
+            margin-bottom: 0.9rem;
         }
 
         .title-subtitle {
@@ -1683,10 +1696,32 @@ def main_interface():
         }
 
         .sparkline-tick-label {
-            font-size: 0.55rem;
+            font-size: 1rem;
             fill: #475569;
             text-anchor: middle;
             dominant-baseline: hanging;
+        }
+
+        .theory-highlight {
+            position: relative;
+            animation: theory-pulse 1.4s ease-out;
+            box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.65);
+            background: rgba(191, 219, 254, 0.25);
+        }
+
+        @keyframes theory-pulse {
+            0% {
+                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.9);
+                background: rgba(191, 219, 254, 0.55);
+            }
+            60% {
+                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.4);
+                background: rgba(191, 219, 254, 0.3);
+            }
+            100% {
+                box-shadow: inset 4px 0 0 0 rgba(37, 99, 235, 0.15);
+                background: rgba(191, 219, 254, 0.15);
+            }
         }
 
         [data-testid="status"] {
@@ -1922,6 +1957,115 @@ def main_interface():
                     with gr.Tab("🔵 Layer by Layer"):
                         theory_layers_md = gr.Markdown(THEORY_TEXT["layers"], elem_id="theory-layers")
 
+        gr.HTML(
+            """
+            <script>
+            (function () {
+                function getAppRoot() {
+                    if (window.gradioApp) {
+                        const appEl = window.gradioApp();
+                        if (appEl) {
+                            return appEl.shadowRoot || appEl;
+                        }
+                    }
+                    return document;
+                }
+
+                function cssEscapeId(value) {
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return value.replace(/[^a-zA-Z0-9_-]/g, "");
+                }
+
+                function focusTheory(targetId) {
+                    const root = getAppRoot();
+                    if (!root) {
+                        return;
+                    }
+
+                    const theoryButton = Array.from(root.querySelectorAll("button"))
+                        .find((btn) => btn.textContent && btn.textContent.trim() === "Theory");
+                    if (theoryButton) {
+                        theoryButton.click();
+                    }
+
+                    const innerTabLabels = {
+                        "theory-attention": "🟠 Attention",
+                        "theory-softmax": "🟣 Softmax",
+                        "theory-layers": "🔵 Layer by Layer",
+                    };
+
+                    const innerLabel = innerTabLabels[targetId];
+                    if (innerLabel) {
+                        setTimeout(() => {
+                            const innerButton = Array.from(root.querySelectorAll("button"))
+                                .find((btn) => btn.textContent && btn.textContent.trim().startsWith(innerLabel));
+                            if (innerButton) {
+                                innerButton.click();
+                            }
+                        }, 60);
+                    }
+
+                    setTimeout(() => {
+                        const selector = "#" + cssEscapeId(targetId);
+                        const section = root.querySelector(selector);
+                        if (section && section.scrollIntoView) {
+                            section.scrollIntoView({ behavior: "smooth", block: "start" });
+                            section.classList.add("theory-highlight");
+                            setTimeout(() => section.classList.remove("theory-highlight"), 1800);
+                        }
+                        if (targetId) {
+                            window.location.hash = "#" + targetId;
+                        }
+                    }, 120);
+                }
+
+                function bindTheoryLinks(root) {
+                    if (!root || root.__theoryLinksHooked) {
+                        return;
+                    }
+                    root.__theoryLinksHooked = true;
+                    root.addEventListener("click", function (event) {
+                        const anchor = event.target.closest('a[href^="#theory-"]');
+                        if (!anchor) {
+                            return;
+                        }
+                        const targetId = anchor.getAttribute("href").slice(1);
+                        if (!targetId) {
+                            return;
+                        }
+                        event.preventDefault();
+                        focusTheory(targetId);
+                    });
+                }
+
+                function init() {
+                    const root = getAppRoot();
+                    if (root) {
+                        bindTheoryLinks(root);
+                    }
+                }
+
+                if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", init);
+                } else {
+                    init();
+                }
+
+                const observer = new MutationObserver(() => {
+                    const root = getAppRoot();
+                    if (root) {
+                        bindTheoryLinks(root);
+                    }
+                });
+                observer.observe(document, { childList: true, subtree: true });
+            })();
+            </script>
+            """,
+            elem_id="theory-link-script",
+        )
+
         # Event handlers
         # Store original answer to avoid re-generation
         original_answer_cache: Dict[Tuple[str, float], Dict[str, object]] = {}
@@ -2077,6 +2221,41 @@ def main_interface():
             original_payload = original_entry["payload"]
 
             correction_context = f"{original_answer} is wrong, the right answer is"
+
+            stage_one = gr.update(value=_build_pipeline_html(1, 2, temperature), visible=True)
+            yield (
+                stage_one,
+                "_Retokenising the prompt so TinyLlama can hear your nudge…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
+            time.sleep(0.12)
+
+            stage_two = gr.update(value=_build_pipeline_html(2, 3, temperature), visible=True)
+            yield (
+                stage_two,
+                "_Replaying attention over the original question to gather context…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
+            time.sleep(0.12)
+
+            stage_three = gr.update(value=_build_pipeline_html(3, 4, temperature), visible=True)
+            yield (
+                stage_three,
+                "_Pushing the representation through layers and scoring new candidates…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
             corrected_answer, corrected_payload = generate_one_word_answer(
                 question,
                 context=correction_context,
@@ -2093,28 +2272,6 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
                 return
-
-            stage_one = gr.update(value=_build_pipeline_html(1, 2, temperature), visible=True)
-            yield (
-                stage_one,
-                "_We’re preparing the correction run…_",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-            )
-
-            time.sleep(0.12)
-
-            stage_two = gr.update(value=_build_pipeline_html(3, 4, temperature), visible=True)
-            yield (
-                stage_two,
-                "_Recomputing attention, layers, and probabilities…_",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-            )
 
             summary, attention_html, softmax_html, layers_html, delta_html = build_correction_sections(
                 question,
@@ -2172,6 +2329,40 @@ def main_interface():
             original_payload = original_entry["payload"]
 
             correction_context = f"{original_answer} is wrong, the right answer is {correction.strip()}"
+            stage_one = gr.update(value=_build_pipeline_html(1, 2, temperature), visible=True)
+            yield (
+                stage_one,
+                "_Blending your correction into the prompt…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
+            time.sleep(0.12)
+
+            stage_two = gr.update(value=_build_pipeline_html(2, 3, temperature), visible=True)
+            yield (
+                stage_two,
+                "_Letting attention refocus around your corrected word…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
+            time.sleep(0.12)
+
+            stage_three = gr.update(value=_build_pipeline_html(3, 4, temperature), visible=True)
+            yield (
+                stage_three,
+                "_Propagating the tweak through layers and recomputing probabilities…_",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+                "<em>No comparison yet.</em>",
+            )
+
             corrected_answer, corrected_payload = generate_one_word_answer(
                 question,
                 context=correction_context,
@@ -2188,28 +2379,6 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                 )
                 return
-
-            stage_one = gr.update(value=_build_pipeline_html(1, 2, temperature), visible=True)
-            yield (
-                stage_one,
-                "_Blending your correction into the prompt…_",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-            )
-
-            time.sleep(0.12)
-
-            stage_two = gr.update(value=_build_pipeline_html(3, 4, temperature), visible=True)
-            yield (
-                stage_two,
-                "_Running TinyLlama again with your hint…_",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-                "<em>No comparison yet.</em>",
-            )
 
             summary, attention_html, softmax_html, layers_html, delta_html = build_correction_sections(
                 question,
