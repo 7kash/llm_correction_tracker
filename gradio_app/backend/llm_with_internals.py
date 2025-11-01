@@ -244,8 +244,7 @@ class LLMWithInternals:
         self,
         question: str,
         max_new_tokens: int = 10,
-        context: str = None,
-        temperature: float = 0.2,
+        context: str = None
     ) -> Dict:
         """
         Generate one-word answer and show what each layer predicts (logit lens).
@@ -273,9 +272,6 @@ class LLMWithInternals:
         else:
             prompt = f"Answer in one word only.\n\nQuestion: {question}\nAnswer:"
 
-        temperature = float(temperature or 0.2)
-        temperature = max(0.05, temperature)
-
         # Tokenize
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
@@ -294,7 +290,7 @@ class LLMWithInternals:
             generated_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                temperature=temperature,
+                temperature=0.1,
                 do_sample=False,
                 pad_token_id=self.tokenizer.eos_token_id,
                 eos_token_id=stop_token_ids
@@ -302,10 +298,6 @@ class LLMWithInternals:
 
         response_ids = generated_ids[0, input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
-
-        full_sequence = generated_ids[0]
-        input_tokens = self.tokenizer.convert_ids_to_tokens(full_sequence[:input_length])
-        output_tokens = self.tokenizer.convert_ids_to_tokens(full_sequence[input_length:])
 
         # Clean response: Extract just the answer (stop at newline, punctuation, etc.)
         response_text = response_text.strip()
@@ -327,37 +319,6 @@ class LLMWithInternals:
             response_text = ' '.join(words[:2])
         elif len(words) == 0:
             response_text = "ERROR"
-
-        # Step 1b: Capture cross-token attention from a forward pass on the full sequence
-        attention_heatmap = None
-        if len(full_sequence) > 0:
-            with torch.no_grad():
-                full_outputs = self.model(
-                    input_ids=full_sequence.unsqueeze(0).to(self.device),
-                    output_attentions=True,
-                    output_hidden_states=False,
-                )
-
-            attentions_tuple = full_outputs.attentions
-            if attentions_tuple:
-                last_layer_attn = attentions_tuple[-1][0].mean(dim=0).cpu().numpy()
-                prompt_len = input_length
-                seq_len = last_layer_attn.shape[0]
-                heatmap_values: List[List[float]] = []
-
-                for pos in range(prompt_len, seq_len):
-                    attn_to_prompt = last_layer_attn[pos, :prompt_len].astype(float)
-                    total = float(attn_to_prompt.sum())
-                    if total > 0:
-                        attn_to_prompt = attn_to_prompt / total
-                    heatmap_values.append((attn_to_prompt * 100).tolist())
-
-                if heatmap_values:
-                    attention_heatmap = {
-                        "prompt_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "values": heatmap_values,
-                    }
 
         # Step 2: Forward pass on PROMPT ONLY (no cheating!)
         # This shows what each layer predicts WITHOUT seeing the answer
@@ -387,8 +348,7 @@ class LLMWithInternals:
 
             # Apply LM head
             logits = self.model.lm_head(hidden_at_prediction)
-            scaled_logits = logits / temperature
-            probs = torch.softmax(scaled_logits, dim=-1)
+            probs = torch.softmax(logits, dim=-1)
 
             # Get probability of the ACTUAL answer (decoded full text)
             actual_answer_prob = 0.0
@@ -465,13 +425,14 @@ class LLMWithInternals:
             # Store softmax example from final layer for educational visualization
             if layer_idx == len(hidden_states_tuple) - 1:
                 # Get top 20 tokens to filter through (we'll keep 5 meaningful ones)
-                _, top_logit_ids = torch.topk(logits, k=20)
+                top_logits_vals, top_logit_ids = torch.topk(logits, k=20)
                 softmax_data = []
                 for i in range(20):
                     if len(softmax_data) >= 5:  # Stop after finding 5 good tokens
                         break
 
                     token_id = top_logit_ids[i].item()
+                    logit_val = float(top_logits_vals[i].item())
                     prob_val = float(probs[token_id].item())
                     # Decode with proper cleanup
                     token_str = self.tokenizer.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)
@@ -494,7 +455,7 @@ class LLMWithInternals:
 
                     softmax_data.append({
                         "token": token_clean,
-                        "logit": float((scaled_logits[token_id]).item()),
+                        "logit": logit_val,
                         "probability": prob_val
                     })
 
@@ -539,10 +500,7 @@ class LLMWithInternals:
             "softmax_example": softmax_example,  # Softmax transformation data
             "num_layers": len(layer_predictions),
             "question": question,  # Original question for filtering
-            "context": context,  # Context for filtering
-            "attention_heatmap": attention_heatmap,
-            "generated_tokens": output_tokens,
-            "temperature": temperature,
+            "context": context  # Context for filtering
         }
 
     def _process_attentions_from_forward(
