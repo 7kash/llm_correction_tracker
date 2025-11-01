@@ -554,7 +554,7 @@ def main_interface():
 
         .title-section {
             text-align: center;
-            padding: 4rem 2rem 2.5rem 2rem;
+            padding: 2.5rem 2rem 2rem 2rem;
             margin-bottom: 2.5rem;
             background: linear-gradient(180deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
             border-radius: 8px;
