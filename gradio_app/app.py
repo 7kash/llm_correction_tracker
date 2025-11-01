@@ -500,43 +500,32 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
     padding = 24
     step = (width - 2 * padding) / max(1, len(confidences) - 1)
     points = []
-    circles = []
     for idx, prob in enumerate(confidences):
         x = padding + step * idx
         y = height - padding - (prob / 100.0) * (height - 2 * padding)
         points.append(f"{x:.1f},{y:.1f}")
-        circles.append(
-            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='4' class='sparkline-point' />"
-        )
 
-    area_points = " ".join([f"{padding},{height - padding}"] + points + [f"{padding + step * (len(confidences) - 1):.1f},{height - padding}"])
     polyline_points = " ".join(points)
-    final_token = generated_tokens[0] if generated_tokens else "the answer"
     axis_y = height - padding
     axis_end = padding + step * max(1, len(confidences) - 1)
-    tick_marks = []
+    tick_labels = []
     for idx in range(len(confidences)):
         x = padding + step * idx
-        tick_marks.append(
-            f"<line x1='{x:.1f}' y1='{axis_y}' x2='{x:.1f}' y2='{axis_y + 6}' class='sparkline-tick-mark' />"
+        tick_labels.append(
+            f"<text x='{x:.1f}' y='{axis_y + 14}' class='sparkline-tick-label'>{idx}</text>"
         )
-        tick_marks.append(
-            f"<text x='{x:.1f}' y='{axis_y + 18}' class='sparkline-tick-label'>{idx}</text>"
-        )
-    ticks_svg = "".join(tick_marks)
+    ticks_svg = "".join(tick_labels)
+    final_token = generated_tokens[0] if generated_tokens else "the answer"
 
     return (
         "<div class=\"sparkline-wrapper\">"
-        "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong> — watch the model’s certainty climb layer by layer.</div>"
-        "<p class=\"sparkline-note\">Each dot is a transformer layer. The horizontal axis is the layer number; the vertical position shows the final answer’s probability at that layer.</p>"
+        "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong></div>"
         f"<svg viewBox=\"0 0 {width} {height}\" class=\"sparkline\">"
-        f"<path d=\"M {area_points} Z\" class=\"sparkline-area\" />"
         f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
-        f"<line x1='{padding}' y1='{axis_y}' x2='{axis_end:.1f}' y2='{axis_y}' class=\"sparkline-axis-line\" />"
-        f"<text x='{axis_end:.1f}' y='{axis_y + 32}' class=\"sparkline-axis-caption\">Layer →</text>"
+        f"<line x1='{padding}' y1='{axis_y}' x2='{axis_end:.1f}' y2='{axis_y}' class=\"sparkline-axis\" />"
         f"{ticks_svg}"
-        f"{''.join(circles)}"
         "</svg>"
+        f"<p class=\"sparkline-note\">Probability of {final_token} after each transformer layer. Watch the line climb as the model commits to the answer.</p>"
         "</div>"
     )
 
@@ -1786,55 +1775,34 @@ def main_interface():
             height: auto;
         }
 
-        .sparkline-area {
-            fill: rgba(14, 165, 233, 0.15);
-        }
-
         .sparkline-line {
             fill: none;
             stroke: rgba(14, 165, 233, 0.9);
-            stroke-width: 2;
+            stroke-width: 2.5;
+            stroke-linejoin: round;
+            stroke-linecap: round;
         }
 
-        .sparkline-point {
-            fill: #0ea5e9;
-            stroke: #0c4a6e;
+        .sparkline-axis {
+            stroke: rgba(15, 23, 42, 0.4);
             stroke-width: 1;
+        }
+
+        .sparkline-tick-label {
+            fill: #0f172a;
+            text-anchor: middle;
+            dominant-baseline: hanging;
         }
 
         .sparkline-note {
             margin: 0.4rem 0 0.6rem 0;
             font-size: 0.85rem;
             color: #1e293b;
-            line-height: 1.5;
-        }
-
-        .sparkline-axis-line {
-            stroke: #64748b;
-            stroke-width: 1.2;
-        }
-
-        .sparkline-tick-mark {
-            stroke: rgba(148, 163, 184, 0.85);
-            stroke-width: 1;
-        }
-
-        .sparkline-tick-label {
-            font-size: 1rem;
-            fill: #0f172a;
-            text-anchor: middle;
-            dominant-baseline: hanging;
+            line-height: 1.45;
         }
 
         [data-testid="status"] {
             display: none !important;
-        }
-
-        .sparkline-axis-caption {
-            font-size: 0.85rem;
-            fill: #0f172a;
-            text-anchor: end;
-            font-weight: 600;
         }
 
         .delta-wrapper {
