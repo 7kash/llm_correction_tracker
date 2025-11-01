@@ -299,6 +299,10 @@ class LLMWithInternals:
         response_ids = generated_ids[0, input_length:]
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
 
+        full_sequence = generated_ids[0]
+        input_tokens = self.tokenizer.convert_ids_to_tokens(full_sequence[:input_length])
+        output_tokens = self.tokenizer.convert_ids_to_tokens(full_sequence[input_length:])
+
         # Clean response: Extract just the answer (stop at newline, punctuation, etc.)
         response_text = response_text.strip()
 
@@ -319,6 +323,37 @@ class LLMWithInternals:
             response_text = ' '.join(words[:2])
         elif len(words) == 0:
             response_text = "ERROR"
+
+        # Step 1b: Capture cross-token attention from a forward pass on the full sequence
+        attention_heatmap = None
+        if len(full_sequence) > 0:
+            with torch.no_grad():
+                full_outputs = self.model(
+                    input_ids=full_sequence.unsqueeze(0).to(self.device),
+                    output_attentions=True,
+                    output_hidden_states=False,
+                )
+
+            attentions_tuple = full_outputs.attentions
+            if attentions_tuple:
+                last_layer_attn = attentions_tuple[-1][0].mean(dim=0).cpu().numpy()
+                prompt_len = input_length
+                seq_len = last_layer_attn.shape[0]
+                heatmap_values: List[List[float]] = []
+
+                for pos in range(prompt_len, seq_len):
+                    attn_to_prompt = last_layer_attn[pos, :prompt_len].astype(float)
+                    total = float(attn_to_prompt.sum())
+                    if total > 0:
+                        attn_to_prompt = attn_to_prompt / total
+                    heatmap_values.append((attn_to_prompt * 100).tolist())
+
+                if heatmap_values:
+                    attention_heatmap = {
+                        "prompt_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "values": heatmap_values,
+                    }
 
         # Step 2: Forward pass on PROMPT ONLY (no cheating!)
         # This shows what each layer predicts WITHOUT seeing the answer
@@ -500,7 +535,9 @@ class LLMWithInternals:
             "softmax_example": softmax_example,  # Softmax transformation data
             "num_layers": len(layer_predictions),
             "question": question,  # Original question for filtering
-            "context": context  # Context for filtering
+            "context": context,  # Context for filtering
+            "attention_heatmap": attention_heatmap,
+            "generated_tokens": output_tokens,
         }
 
     def _process_attentions_from_forward(

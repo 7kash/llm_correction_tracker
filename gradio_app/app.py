@@ -7,8 +7,12 @@ of internal mechanisms: attention, softmax, and layer-by-layer predictions.
 Deployment: Hugging Face Spaces
 """
 
+import html
+import math
+import re
+
 import gradio as gr
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Dict, Set
 
 from backend.llm_with_internals import LLMWithInternals
 from visualizations.answer_flow import get_clean_words, clean_token
@@ -28,23 +32,32 @@ def load_model():
     return MODEL
 
 
-def _format_percentage_bar(label: str, value: float, color_var: str, max_items: int = 8) -> str:
+def _format_percentage_bar(
+    label: str, value: float, color_var: str, secondary_label: str = ""
+) -> str:
     """Create a horizontal bar for percentage-based metrics."""
+    safe_label = html.escape(label)
+    safe_secondary = html.escape(secondary_label) if secondary_label else "&nbsp;"
     display_pct = round(value, 1)
-    bar_width = min(100, int(value))
-    return (
-        "<div class=\"metric-row\">"
-        f"<span class=\"metric-label\">{label}</span>"
-        "<div class=\"metric-track\">"
-        f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var({color_var});\"></div>"
-        "</div>"
-        f"<span class=\"metric-value\">{display_pct}%</span>"
-        "</div>"
+    safe_value = max(0.0, value)
+    bar_width = min(100, int(round(safe_value)))
+    secondary_html = f"<span class=\"metric-secondary\">{safe_secondary}</span>"
+    return "".join(
+        [
+            "<div class=\"metric-row\">",
+            f"<span class=\"metric-label\">{safe_label}</span>",
+            secondary_html,
+            "<div class=\"metric-track\">",
+            f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var({color_var});\"></div>",
+            "</div>",
+            f"<span class=\"metric-value\">{display_pct}%</span>",
+            "</div>",
+        ]
     )
 
 
 def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]], str]:
-    """Return top attention words and formatted HTML."""
+    """Return attention percentages for every prompt/context word with formatted HTML."""
     attention_percentages = internals.get("attention_percentages")
     if attention_percentages is None:
         return [], "_Attention data is not available for this turn yet._"
@@ -52,51 +65,81 @@ def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]]
     input_tokens = internals.get("input_tokens", [])
     question = internals.get("question", "")
     context = internals.get("context", "")
+    if not question and not context:
+        return [], "_Provide a prompt to see attention percentages._"
 
-    allowed_words = set()
-    if question:
-        for word in question.lower().replace("?", " ").replace(",", " ").split():
-            word = word.strip()
-            if word:
-                allowed_words.add(word)
+    def split_words(text: str) -> List[str]:
+        if not text:
+            return []
+        return [word for word in re.split(r"[^0-9A-Za-z']+", text) if word]
 
-    if context:
-        context_clean = (
-            context.replace("#", " ")
-            .replace(",", " ")
-            .replace("?", " ")
-            .replace(".", " ")
-            .replace("\"", " ")
-            .replace("'", " ")
-        )
-        for word in context_clean.split():
-            word = word.strip().lower()
-            if word:
-                allowed_words.add(word)
+    question_words = split_words(question)
+    context_words = split_words(context)
 
-    word_attention: Dict[str, float] = {}
-    for word, token_indices in get_clean_words(input_tokens):
-        word_lower = word.lower().strip()
-        if not word_lower or word_lower not in allowed_words:
+    word_sources: Dict[str, Set[str]] = {}
+    display_lookup: Dict[str, str] = {}
+    ordered_keys: List[str] = []
+
+    for word in question_words:
+        lowered = word.lower()
+        if not lowered:
             continue
+        if lowered not in word_sources:
+            ordered_keys.append(lowered)
+            display_lookup[lowered] = word
+            word_sources[lowered] = set()
+        word_sources[lowered].add("Prompt")
 
+    for word in context_words:
+        lowered = word.lower()
+        if not lowered:
+            continue
+        if lowered not in word_sources:
+            ordered_keys.append(lowered)
+            display_lookup[lowered] = word
+            word_sources[lowered] = set()
+        word_sources[lowered].add("Context")
+
+    if not ordered_keys:
+        return [], "_No prompt words were captured for attention tracking._"
+
+    word_token_map: Dict[str, Dict[str, List[int]]] = {}
+    for word, token_indices in get_clean_words(input_tokens):
+        lowered = word.lower().strip()
+        if not lowered:
+            continue
+        entry = word_token_map.setdefault(lowered, {"display": word, "indices": []})
+        entry["indices"].extend(token_indices)
+
+    metrics: List[Tuple[str, float]] = []
+    metric_rows: List[str] = []
+
+    prompt_html = "<div class=\"prompt-summary\">"
+    prompt_html += f"<strong>Prompt:</strong> {html.escape(question) if question else '—'}"
+    if context:
+        prompt_html += f"<br><strong>Context:</strong> {html.escape(context)}"
+    prompt_html += "</div>"
+
+    for lowered in ordered_keys:
+        entry = word_token_map.get(lowered)
+        display_word = entry["display"] if entry else display_lookup.get(lowered, lowered)
         total_attention = 0.0
-        for idx in token_indices:
-            if idx < len(attention_percentages):
-                total_attention += float(attention_percentages[idx])
+        if entry:
+            for idx in entry["indices"]:
+                if idx < len(attention_percentages):
+                    total_attention += float(attention_percentages[idx])
+        sources = word_sources.get(lowered, {"Prompt"})
+        if len(sources) == 2:
+            source_label = "Prompt + Context"
+        else:
+            source_label = next(iter(sources))
+        metrics.append((display_word, total_attention))
+        metric_rows.append(
+            _format_percentage_bar(display_word, total_attention, "--attention-color", source_label)
+        )
 
-        if total_attention > 0:
-            word_attention[word] = total_attention
-
-    if not word_attention:
-        return [], "_The model focused on helper tokens rather than the question words. Try another prompt!_"
-
-    sorted_words = sorted(word_attention.items(), key=lambda item: item[1], reverse=True)[:8]
-    metric_rows = [
-        _format_percentage_bar(word, value, "--attention-color")
-        for word, value in sorted_words
-    ]
-    return sorted_words, "<div class=\"metric-list\">" + "".join(metric_rows) + "</div>"
+    metrics_html = "<div class=\"metric-list\">" + "".join(metric_rows) + "</div>"
+    return metrics, prompt_html + metrics_html
 
 
 def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
@@ -110,7 +153,8 @@ def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
     for item in softmax_example:
         token = item.get("token", "?")
         prob = float(item.get("probability", 0.0)) * 100
-        logit = float(item.get("logit", 0.0))
+        raw_logit = item.get("logit")
+        logit = float(raw_logit) if raw_logit is not None else None
         cleaned = clean_token(token)
         if cleaned:
             token_display, _ = cleaned
@@ -122,15 +166,36 @@ def _collect_softmax_metrics(internals: dict) -> Tuple[List[dict], str]:
             "prob": prob,
             "logit": logit,
         })
-        bar_width = min(100, int(prob))
+        bar_width = min(100, int(round(prob)))
+        logit_text = f"logit {logit:+.2f}" if logit is not None else "—"
         rows.append(
             "<div class=\"metric-row\">"
             f"<span class=\"metric-label\">{token_display}</span>"
-            f"<span class=\"metric-logit\">logit {logit:+.2f}</span>"
+            f"<span class=\"metric-logit\">{logit_text}</span>"
             "<div class=\"metric-track\">"
             f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var(--softmax-color);\"></div>"
             "</div>"
             f"<span class=\"metric-value\">{prob:.1f}%</span>"
+            "</div>"
+        )
+
+    total_prob = sum(entry["prob"] for entry in items)
+    remainder = max(0.0, 100.0 - total_prob)
+    if remainder > 0.05:
+        bar_width = min(100, int(round(remainder)))
+        items.append({
+            "token": "Other tokens",
+            "prob": remainder,
+            "logit": None,
+        })
+        rows.append(
+            "<div class=\"metric-row\">"
+            "<span class=\"metric-label\">Other tokens</span>"
+            "<span class=\"metric-logit\">—</span>"
+            "<div class=\"metric-track\">"
+            f"<div class=\"metric-fill\" style=\"width: {bar_width}%; background: var(--softmax-color);\"></div>"
+            "</div>"
+            f"<span class=\"metric-value\">{remainder:.1f}%</span>"
             "</div>"
         )
 
@@ -194,6 +259,238 @@ def _collect_layer_metrics(internals: dict, actual_answer: str) -> Tuple[List[di
     return metrics, "<div class=\"layer-grid\">" + "".join(layer_rows) + "</div>"
 
 
+def _display_token(token: str) -> str:
+    cleaned = clean_token(token or "")
+    if cleaned:
+        token_text, _ = cleaned
+        token_text = token_text.strip()
+        if token_text:
+            return html.escape(token_text)
+    safe = (token or "").replace("▁", " ").strip()
+    return html.escape(safe or token or "∅")
+
+
+def _render_attention_heatmap(heatmap: dict) -> str:
+    if not heatmap:
+        return "<em>Run the model to see a token-by-token attention heatmap.</em>"
+
+    prompt_tokens = heatmap.get("prompt_tokens") or []
+    output_tokens = heatmap.get("output_tokens") or []
+    values = heatmap.get("values") or []
+
+    if not prompt_tokens or not output_tokens or not values:
+        return "<em>Attention heatmap data is unavailable.</em>"
+
+    rows_html = []
+    for prompt_idx, prompt_token in enumerate(prompt_tokens):
+        cells = []
+        for column_idx, column in enumerate(values):
+            pct = 0.0
+            if prompt_idx < len(column):
+                pct = float(column[prompt_idx])
+            intensity = min(0.85, 0.15 + (pct / 100.0) * 0.7)
+            cells.append(
+                "<td style=\"background: rgba(249, 115, 22, {intensity:.3f});\">"
+                f"<span class=\"heatmap-value\">{pct:.1f}%</span>"
+                "</td>".format(intensity=intensity)
+            )
+
+        rows_html.append(
+            "<tr>"
+            f"<th scope=\"row\">{_display_token(prompt_token)}</th>"
+            + "".join(cells)
+            + "</tr>"
+        )
+
+    header_cells = [f"<th>{_display_token(token)}</th>" for token in output_tokens]
+    header_html = "<tr><th>Prompt token</th>" + "".join(header_cells) + "</tr>"
+
+    return (
+        "<div class=\"heatmap-wrapper\">"
+        "<div class=\"heatmap-heading\"><strong>Token attention heatmap</strong> — colours show how much each output token"
+        " re-read your prompt words.</div>"
+        "<table class=\"heatmap-table\">"
+        + header_html
+        + "".join(rows_html)
+        + "</table>"
+        "</div>"
+    )
+
+
+def _render_softmax_waterfall(metrics: List[dict]) -> str:
+    if not metrics:
+        return "<em>Softmax waterfall will appear after the model proposes a token.</em>"
+
+    logit_entries = [m for m in metrics if m.get("logit") is not None]
+    if not logit_entries:
+        return "<em>Logit data was unavailable for this token.</em>"
+
+    max_logit = max(m["logit"] for m in logit_entries)
+    sum_shifted_all = None
+    shifted_values = {}
+
+    for entry in logit_entries:
+        prob = max(entry.get("prob", 0.0) / 100.0, 1e-9)
+        shift = entry["logit"] - max_logit
+        exp_shift = math.exp(shift)
+        shifted_values[entry["token"]] = exp_shift
+        if sum_shifted_all is None and prob > 0:
+            sum_shifted_all = exp_shift / prob
+
+    if sum_shifted_all is None:
+        sum_shifted_all = sum(shifted_values.values()) or 1.0
+
+    rows = []
+    for entry in metrics:
+        token = entry.get("token", "?")
+        prob_pct = float(entry.get("prob", 0.0))
+        prob_fraction = prob_pct / 100.0
+
+        if entry.get("logit") is not None:
+            exp_shift = shifted_values.get(token, 0.0)
+        else:
+            exp_shift = prob_fraction * sum_shifted_all
+
+        exp_width = min(100, int(round((exp_shift / sum_shifted_all) * 100))) if sum_shifted_all else 0
+        prob_width = min(100, int(round(prob_pct)))
+        logit_text = f"{entry['logit']:+.2f} logit" if entry.get("logit") is not None else "—"
+
+        rows.append(
+            "<div class=\"waterfall-row\">"
+            f"<div class=\"waterfall-token\">{html.escape(token)}</div>"
+            f"<div class=\"waterfall-stage\">{logit_text}</div>"
+            f"<div class=\"waterfall-stage\"><div class=\"waterfall-bar exp\" style=\"width:{exp_width}%;\"></div><span>exp= {exp_shift:.3f}</span></div>"
+            f"<div class=\"waterfall-stage\"><div class=\"waterfall-bar prob\" style=\"width:{prob_width}%;\"></div><span>{prob_pct:.1f}%</span></div>"
+            "</div>"
+        )
+
+    return (
+        "<div class=\"waterfall-wrapper\">"
+        "<div class=\"waterfall-heading\"><strong>Softmax waterfall</strong> — track each token from raw logit to final probability.</div>"
+        + "".join(rows)
+        + "</div>"
+    )
+
+
+def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) -> str:
+    if not metrics:
+        return "<em>Run the model to chart confidence growth across layers.</em>"
+
+    confidences = [max(0.0, min(100.0, (entry.get("actual") or {}).get("prob", 0.0))) for entry in metrics]
+    if not any(confidences):
+        return "<em>Confidence sparkline will appear once the model locks onto a candidate.</em>"
+
+    width = 360
+    height = 120
+    padding = 24
+    step = (width - 2 * padding) / max(1, len(confidences) - 1)
+    points = []
+    for idx, prob in enumerate(confidences):
+        x = padding + step * idx
+        y = height - padding - (prob / 100.0) * (height - 2 * padding)
+        points.append(f"{x:.1f},{y:.1f}")
+
+    area_points = " ".join([f"{padding},{height - padding}"] + points + [f"{padding + step * (len(confidences) - 1):.1f},{height - padding}"])
+    polyline_points = " ".join(points)
+    final_token = generated_tokens[0] if generated_tokens else "the answer"
+
+    return (
+        "<div class=\"sparkline-wrapper\">"
+        "<div class=\"sparkline-heading\"><strong>Confidence sparkline</strong> — see how the model warmed up to"
+        f" {_display_token(final_token)}.</div>"
+        f"<svg viewBox=\"0 0 {width} {height}\" class=\"sparkline\">"
+        f"<path d=\"M {area_points} Z\" class=\"sparkline-area\" />"
+        f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
+        "</svg>"
+        "</div>"
+    )
+
+
+def _render_feedback_delta(original_payload: dict, corrected_payload: dict) -> str:
+    if not original_payload or not corrected_payload:
+        return "<em>Generate a correction to compare attention, probabilities, and layers.</em>"
+
+    def build_lookup(metrics):
+        lookup = {}
+        if not metrics:
+            return lookup
+        for item in metrics:
+            if isinstance(item, tuple) and len(item) == 2:
+                label, value = item
+            elif isinstance(item, dict):
+                label = item.get("token")
+                value = item.get("prob", 0.0)
+            else:
+                continue
+            key = (label or "").strip().lower()
+            if not key:
+                continue
+            lookup[key] = {"label": label, "value": float(value)}
+        return lookup
+
+    orig_attn = build_lookup(original_payload.get("attention", {}).get("metrics"))
+    corr_attn = build_lookup(corrected_payload.get("attention", {}).get("metrics"))
+    attn_items = []
+    for key in set(orig_attn) | set(corr_attn):
+        before = orig_attn.get(key, {"label": corr_attn.get(key, {}).get("label", key), "value": 0.0})
+        after = corr_attn.get(key, {"label": before.get("label", key), "value": 0.0})
+        delta = after["value"] - before["value"]
+        attn_items.append({"label": after.get("label") or before.get("label") or key, "delta": delta})
+
+    attn_items = [item for item in attn_items if abs(item["delta"]) > 0.1]
+    attn_items.sort(key=lambda item: abs(item["delta"]), reverse=True)
+    attn_html = "".join(
+        f"<li><span class=\"delta-label\">{html.escape(item['label'])}</span><span class=\"delta-value\">{item['delta']:+.1f} pts</span></li>"
+        for item in attn_items[:4]
+    ) or "<li>No major shifts detected.</li>"
+
+    orig_softmax = build_lookup(original_payload.get("softmax", {}).get("metrics"))
+    corr_softmax = build_lookup(corrected_payload.get("softmax", {}).get("metrics"))
+    softmax_items = []
+    for key in set(orig_softmax) | set(corr_softmax):
+        before = orig_softmax.get(key, {"label": corr_softmax.get(key, {}).get("label", key), "value": 0.0})
+        after = corr_softmax.get(key, {"label": before.get("label", key), "value": 0.0})
+        delta = after["value"] - before["value"]
+        softmax_items.append({"label": after.get("label") or before.get("label") or key, "delta": delta})
+
+    softmax_items = [item for item in softmax_items if abs(item["delta"]) > 0.05]
+    softmax_items.sort(key=lambda item: abs(item["delta"]), reverse=True)
+    softmax_html = "".join(
+        f"<li><span class=\"delta-label\">{html.escape(item['label'])}</span><span class=\"delta-value\">{item['delta']:+.1f} pts</span></li>"
+        for item in softmax_items[:4]
+    ) or "<li>Probability slate stayed steady.</li>"
+
+    orig_layers = original_payload.get("layers", {}).get("metrics", [])
+    corr_layers = corrected_payload.get("layers", {}).get("metrics", [])
+    layer_changes = []
+    for idx in range(max(len(orig_layers), len(corr_layers))):
+        orig_entry = orig_layers[idx].get("actual") if idx < len(orig_layers) and isinstance(orig_layers[idx], dict) else None
+        corr_entry = corr_layers[idx].get("actual") if idx < len(corr_layers) and isinstance(corr_layers[idx], dict) else None
+        before = (orig_entry or {}).get("prob", 0.0)
+        after = (corr_entry or {}).get("prob", 0.0)
+        delta = after - before
+        if abs(delta) < 0.1:
+            continue
+        layer_changes.append({"layer": idx, "delta": delta})
+
+    layer_changes.sort(key=lambda item: abs(item["delta"]), reverse=True)
+    layer_html = "".join(
+        f"<li>Layer {item['layer']}: {item['delta']:+.1f} pts toward the answer</li>"
+        for item in layer_changes[:4]
+    ) or "<li>Layer confidence barely moved.</li>"
+
+    return (
+        "<div class=\"delta-wrapper\">"
+        "<div class=\"delta-heading\"><strong>Feedback impact</strong> — quick view of what changed most.</div>"
+        "<div class=\"delta-grid\">"
+        f"<div class=\"delta-card\"><h4>Attention shifts</h4><ul>{attn_html}</ul></div>"
+        f"<div class=\"delta-card\"><h4>Probability swings</h4><ul>{softmax_html}</ul></div>"
+        f"<div class=\"delta-card\"><h4>Layer momentum</h4><ul>{layer_html}</ul></div>"
+        "</div>"
+        "</div>"
+    )
+
+
 THEORY_TEXT = {
     "overview": """
 ### How a transformer answers your question
@@ -206,6 +503,8 @@ THEORY_TEXT = {
 4. **Prediction head.** The refined vector is scored against every vocabulary item, then softmax produces a clean probability distribution.
 
 This app surfaces the three most important snapshots: attention weights (what it focused on), the softmax slate (which words competed), and the layer-by-layer probes (how certainty built up).
+
+_Try it:_ ask a question, then scan the Query tab from left to right. The attention list and heatmap show what the model reread, the softmax bars plus waterfall reveal why one token won, and the sparkline shows how confidence built with depth.
 """.strip(),
     "feedback": """
 ### What happens when you correct the model
@@ -217,6 +516,8 @@ This app surfaces the three most important snapshots: attention weights (what it
 * **Softmax.** Competing tokens lose probability mass as the corrected token gathers stronger evidence.
 
 Even though weights are frozen, the conversation context acts like temporary memory: every new turn recomputes the internals using both the original question and your feedback.
+
+_Try it:_ after spotting a mistake, press “That’s Wrong” and then open the Δ Impact tab. It distills which prompt words gained attention, how probabilities rebalanced, and which layers accelerated toward the right token.
 """.strip(),
     "attention": """
 ### How attention works
@@ -235,6 +536,8 @@ Step-by-step:
 4. Blend the value vectors (**V**) using those percentages, giving the model a context summary tailored to the next word.
 
 The orange bars in the Query tab show which words grabbed the most weight for the final answer.
+
+_Try it:_ compare the bar chart with the heatmap underneath—every prompt and context word appears in both, so you can see how the percentages line up across repeated tokens.
 """.strip(),
     "softmax": """
 ### How softmax turns scores into probabilities
@@ -252,6 +555,8 @@ What this means in practice:
 * Even small score gaps can create big probability differences, which is why the purple bars can look decisive.
 
 Sampling or temperature tweaks would flatten or sharpen these probabilities, but here we keep it simple so the behaviour stays interpretable.
+
+_Try it:_ read the purple bars first, then scroll to the waterfall to see the intermediate “exp” step that converts logits into those same percentages.
 """.strip(),
     "layers": """
 ### Why layer-by-layer probes are helpful
@@ -265,6 +570,8 @@ TinyLlama has 22 transformer layers. For every layer we temporarily plug in the 
 * **Late layers** sharpen the concept until one token clearly dominates.
 
 When feedback is applied, look for the blue cards to show the corrected token rising sooner or more steeply across the stack.
+
+_Try it:_ trace the sparkline after a correction—the slope should bend upward earlier if the hint helped.
 """.strip(),
 }
 
@@ -276,9 +583,9 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
     answer = internals.get("response", "").strip() or internals.get("text", "")
 
     overview_lines = [
-        "### What the model just did",
-        f"It read **{question}** and proposed **{answer or '...'}** as a one-word answer.",
-        "The sections below break down how it focused on the prompt, weighed candidate words, and refined the final choice layer by layer.",
+        "### How the model responded",
+        f"It read **{html.escape(question)}** and proposed **{html.escape(answer or '...')}** as its next word.",
+        "The tabs below unpack where it placed attention, how likely each candidate word looked, and how certainty grew across layers.",
     ]
     if guidance_note:
         overview_lines.append(f"<div class='soft-note'>{guidance_note}</div>")
@@ -286,6 +593,9 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
     attention_metrics, attention_html = _collect_attention_metrics(internals)
     softmax_metrics, softmax_html = _collect_softmax_metrics(internals)
     layer_metrics, layer_html = _collect_layer_metrics(internals, answer)
+    attention_heatmap_html = _render_attention_heatmap(internals.get("attention_heatmap"))
+    softmax_waterfall_html = _render_softmax_waterfall(softmax_metrics)
+    layer_sparkline_html = _render_layer_sparkline(layer_metrics, internals.get("generated_tokens", []))
 
     return {
         "question": question,
@@ -297,6 +607,7 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
                 "<div class=\"section-note pill-attention\"><strong>Where focus went:</strong> higher bars mean the model relied more on that word.</div>"
                 + attention_html
             ),
+            "heatmap": attention_heatmap_html,
         },
         "softmax": {
             "metrics": softmax_metrics,
@@ -304,6 +615,7 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
                 "<div class=\"section-note pill-softmax\"><strong>Top candidates:</strong> the probability shows how confident the model was before choosing.</div>"
                 + softmax_html
             ),
+            "waterfall": softmax_waterfall_html,
         },
         "layers": {
             "metrics": layer_metrics,
@@ -311,6 +623,7 @@ def build_visualization_payload(internals: dict, guidance_note: str = "") -> dic
                 "<div class=\"section-note pill-layers\"><strong>Confidence by layer:</strong> later layers should favour the final answer.</div>"
                 + layer_html
             ),
+            "sparkline": layer_sparkline_html,
         },
         "theory": {
             "overview": THEORY_TEXT["overview"],
@@ -329,8 +642,19 @@ def build_correction_sections(
     correction_context: str,
     corrected_answer: str,
     corrected_payload: dict,
-) -> Tuple[str, str, str, str]:
-    """Return summary and per-section comparison HTML blocks."""
+) -> Tuple[str, str, str, str, str]:
+    """Return summary, per-section comparison HTML blocks, and delta view."""
+
+    def strip_section_note(markup: str) -> str:
+        if not markup:
+            return "<em>No data available.</em>"
+        if "section-note" not in markup:
+            return markup
+        closing = markup.find("</div>")
+        if closing == -1:
+            return markup
+        trimmed = markup[closing + len("</div>"):].strip()
+        return trimmed or "<em>No data available.</em>"
 
     def extract_markdown(payload: dict, key: str) -> str:
         if not isinstance(payload, dict):
@@ -338,25 +662,33 @@ def build_correction_sections(
         section = payload.get(key, {})
         if not isinstance(section, dict):
             return "<em>No data available.</em>"
-        return section.get("markdown", "<em>No data available.</em>")
+        markup = section.get("markdown", "")
+        if not markup:
+            return "<em>No data available.</em>"
+        return strip_section_note(markup)
+
+    safe_question = html.escape(question)
+    safe_original = html.escape(original_answer or "—")
+    safe_corrected = html.escape(corrected_answer or "—")
+    safe_context = html.escape(correction_context)
 
     summary = f"""
 <div class="section-note pill-layers">
-    <strong>Question:</strong> {question}<br>
-    <strong>Before feedback:</strong> {original_answer or '—'}<br>
-    <strong>After feedback:</strong> {corrected_answer or '—'}
+    <strong>Question:</strong> {safe_question}<br>
+    <strong>Before feedback:</strong> {safe_original}<br>
+    <strong>After feedback:</strong> {safe_corrected}
 </div>
-<p style="font-size:0.9rem;color:#4B5563;">We reminded the model: <em>{correction_context}</em></p>
+<p style="font-size:0.9rem;color:#4B5563;">We reminded the model: <em>{safe_context}</em></p>
 """
 
     attention = f"""
 <div class="comparison-card">
     <div class="column">
-        <h4 style="margin-top:0; color: var(--attention-color);">Before feedback</h4>
+        <h4 style="margin-top:0; color: var(--attention-color);">Before feedback <span class="info-tooltip" data-tip="Attention percentages from the original prompt run.">?</span></h4>
         {extract_markdown(original_payload, 'attention')}
     </div>
     <div class="column">
-        <h4 style="margin-top:0; color: var(--attention-color);">After feedback</h4>
+        <h4 style="margin-top:0; color: var(--attention-color);">After feedback <span class="info-tooltip" data-tip="Attention recalculated after your correction was injected into the prompt.">?</span></h4>
         {extract_markdown(corrected_payload, 'attention')}
     </div>
 </div>
@@ -365,11 +697,11 @@ def build_correction_sections(
     softmax = f"""
 <div class="comparison-card">
     <div class="column">
-        <h4 style="margin-top:0; color: var(--softmax-color);">Before feedback</h4>
+        <h4 style="margin-top:0; color: var(--softmax-color);">Before feedback <span class="info-tooltip" data-tip="Logits and probabilities the model considered before hearing the correction.">?</span></h4>
         {extract_markdown(original_payload, 'softmax')}
     </div>
     <div class="column">
-        <h4 style="margin-top:0; color: var(--softmax-color);">After feedback</h4>
+        <h4 style="margin-top:0; color: var(--softmax-color);">After feedback <span class="info-tooltip" data-tip="New probability slate once the hint was added to the prompt.">?</span></h4>
         {extract_markdown(corrected_payload, 'softmax')}
     </div>
 </div>
@@ -378,17 +710,19 @@ def build_correction_sections(
     layers = f"""
 <div class="comparison-card">
     <div class="column">
-        <h4 style="margin-top:0; color: var(--layers-color);">Before feedback</h4>
+        <h4 style="margin-top:0; color: var(--layers-color);">Before feedback <span class="info-tooltip" data-tip="How confident each layer was in the original guess.">?</span></h4>
         {extract_markdown(original_payload, 'layers')}
     </div>
     <div class="column">
-        <h4 style="margin-top:0; color: var(--layers-color);">After feedback</h4>
+        <h4 style="margin-top:0; color: var(--layers-color);">After feedback <span class="info-tooltip" data-tip="Layer-by-layer view after the corrective hint.">?</span></h4>
         {extract_markdown(corrected_payload, 'layers')}
     </div>
 </div>
 """
 
-    return summary, attention, softmax, layers
+    delta = _render_feedback_delta(original_payload, corrected_payload)
+
+    return summary, attention, softmax, layers, delta
 
 def is_one_word_question(question: str) -> Tuple[bool, str]:
     """
@@ -553,48 +887,130 @@ def main_interface():
         }
 
         .title-section {
-            text-align: center;
-            padding: 4rem 2rem 2.5rem 2rem;
-            margin-bottom: 2.5rem;
-            background: linear-gradient(180deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
-            border-radius: 8px;
+            padding: 0.5rem 1.25rem 1.1rem 1.25rem;
+            margin-bottom: 1.25rem;
+            background: linear-gradient(180deg, rgba(37, 99, 235, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 10px;
+        }
+
+        .title-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+            align-items: flex-start;
+            justify-content: space-between;
+        }
+
+        .title-copy {
+            flex: 1 1 320px;
+            min-width: 280px;
         }
 
         .title-main {
-            font-size: 1.9rem;
-            font-weight: 400;
+            font-size: 1.8rem;
+            font-weight: 500;
             letter-spacing: -0.02em;
             color: #0f172a;
-            margin: 0 0 0.75rem 0;
+            margin: 0 0 0.35rem 0;
         }
 
         .title-subtitle {
-            font-size: 1rem;
-            font-weight: 400;
+            font-size: 0.98rem;
             color: #4b5563;
-            margin: 0;
-            line-height: 1.7;
-            max-width: 620px;
-            margin: 0 auto;
+            margin: 0 0 0.75rem 0;
+            line-height: 1.6;
+            max-width: 34rem;
         }
 
-        .guide-inline {
-            background: var(--surface-blue);
-            padding: 1.75rem;
-            margin: 2.5rem auto;
-            font-size: 0.95rem;
+        .usage-details {
+            background: rgba(37, 99, 235, 0.07);
+            border: 1px solid rgba(37, 99, 235, 0.15);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+        }
+
+        .usage-details[open] {
+            box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+
+        .usage-details summary {
+            font-weight: 600;
+            cursor: pointer;
+            color: #1d4ed8;
+            outline: none;
+        }
+
+        .usage-details summary::marker {
+            color: #1d4ed8;
+        }
+
+        .usage-body {
+            margin-top: 0.65rem;
+            font-size: 0.92rem;
             color: #1f2937;
-            line-height: 1.75;
-            max-width: 840px;
-            border-left: 3px solid var(--accent-blue);
+            line-height: 1.65;
+        }
+
+        .usage-body ol {
+            margin: 0.5rem 0 0 1.25rem;
+            padding: 0;
+        }
+
+        .usage-body li {
+            margin-bottom: 0.35rem;
+        }
+
+        .usage-meta {
+            margin-top: 0.75rem;
+            font-size: 0.85rem;
+            color: #475569;
+        }
+
+        .pipeline-card {
+            flex: 0 1 240px;
+            background: rgba(20, 184, 166, 0.08);
+            border-radius: 10px;
+            border: 1px solid rgba(20, 184, 166, 0.2);
+            padding: 1rem 1.2rem;
+            box-shadow: inset 0 1px 1px rgba(14, 165, 233, 0.12);
+        }
+
+        .pipeline-card h4 {
+            margin: 0 0 0.6rem 0;
+            font-size: 0.95rem;
+            color: #0f172a;
+        }
+
+        .pipeline-card ol {
+            margin: 0;
+            padding-left: 1.1rem;
+            font-size: 0.88rem;
+            color: #0f172a;
+            line-height: 1.45;
+        }
+
+        .pipeline-card li {
+            margin-bottom: 0.35rem;
+        }
+
+        .prompt-summary {
+            text-align: left;
+            font-size: 0.9rem;
+            color: #1f2937;
+            background: rgba(15, 23, 42, 0.03);
             border-radius: 6px;
-            box-shadow: inset 0 1px 2px rgba(37, 99, 235, 0.08);
+            padding: 0.85rem 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .prompt-summary strong {
+            color: #0f172a;
         }
 
         .section-divider {
             height: 1px;
             background: rgba(15, 23, 42, 0.08);
-            margin: 3rem 0;
+            margin: 1.75rem 0;
         }
 
         /* Smaller buttons */
@@ -699,7 +1115,7 @@ def main_interface():
 
         .metric-row {
             display: grid;
-            grid-template-columns: 140px 90px 1fr 60px;
+            grid-template-columns: 160px 90px 1fr 60px;
             align-items: center;
             gap: 0.75rem;
             font-size: 0.9rem;
@@ -718,6 +1134,13 @@ def main_interface():
             font-family: "JetBrains Mono", "Menlo", monospace;
             font-size: 0.75rem;
             color: #6B7280;
+        }
+
+        .metric-secondary {
+            font-size: 0.7rem;
+            color: #6B7280;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .metric-track {
@@ -793,41 +1216,251 @@ def main_interface():
             padding: 1rem;
             background: #FFFFFF;
         }
+
+        .info-tooltip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            background: rgba(15, 23, 42, 0.08);
+            color: #1f2937;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            margin-left: 0.3rem;
+            cursor: help;
+            position: relative;
+        }
+
+        .info-tooltip::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #111827;
+            color: #f8fafc;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.75rem;
+            border-radius: 4px;
+            opacity: 0;
+            pointer-events: none;
+            white-space: nowrap;
+            transition: opacity 0.15s ease;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+        }
+
+        .info-tooltip:hover::after {
+            opacity: 1;
+        }
+
+        .heatmap-wrapper, .waterfall-wrapper, .sparkline-wrapper {
+            margin-top: 1.25rem;
+            background: rgba(15, 23, 42, 0.02);
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 10px;
+            padding: 1rem 1.2rem;
+        }
+
+        .heatmap-heading, .waterfall-heading, .sparkline-heading {
+            font-size: 0.9rem;
+            color: #1f2937;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+
+        .heatmap-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .heatmap-table th,
+        .heatmap-table td {
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            padding: 0.4rem 0.5rem;
+            text-align: center;
+        }
+
+        .heatmap-table th {
+            background: rgba(249, 115, 22, 0.1);
+            color: #9a3412;
+            font-weight: 600;
+        }
+
+        .heatmap-table th:first-child {
+            text-align: left;
+            min-width: 140px;
+        }
+
+        .heatmap-value {
+            font-weight: 500;
+            color: #7c2d12;
+        }
+
+        .waterfall-row {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr 1.8fr 1.2fr;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.55rem 0.35rem;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        .waterfall-row:last-child {
+            border-bottom: none;
+        }
+
+        .waterfall-token {
+            font-weight: 600;
+            color: #312e81;
+        }
+
+        .waterfall-stage {
+            font-size: 0.78rem;
+            color: #334155;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+
+        .waterfall-bar {
+            position: relative;
+            height: 8px;
+            border-radius: 999px;
+            flex: 0 0 90px;
+        }
+
+        .waterfall-bar.exp {
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), rgba(99, 102, 241, 0.6));
+        }
+
+        .waterfall-bar.prob {
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.2), rgba(99, 102, 241, 0.8));
+        }
+
+        .sparkline {
+            width: 100%;
+            height: auto;
+        }
+
+        .sparkline-area {
+            fill: rgba(14, 165, 233, 0.15);
+        }
+
+        .sparkline-line {
+            fill: none;
+            stroke: rgba(14, 165, 233, 0.9);
+            stroke-width: 2;
+        }
+
+        .delta-wrapper {
+            margin-top: 1.5rem;
+            background: rgba(15, 23, 42, 0.02);
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 10px;
+            padding: 1.2rem 1.4rem;
+        }
+
+        .delta-heading {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 0.9rem;
+        }
+
+        .delta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+
+        .delta-card {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            padding: 0.9rem 1rem;
+            box-shadow: 0 4px 6px rgba(15, 23, 42, 0.04);
+        }
+
+        .delta-card h4 {
+            margin: 0 0 0.6rem 0;
+            font-size: 0.9rem;
+            color: #1f2937;
+        }
+
+        .delta-card ul {
+            margin: 0;
+            padding-left: 1rem;
+            color: #334155;
+            font-size: 0.8rem;
+        }
+
+        .delta-label {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .delta-value {
+            margin-left: 0.4rem;
+            font-family: "JetBrains Mono", "Menlo", monospace;
+            color: #1d4ed8;
+        }
         """
     ) as demo:
 
         gr.HTML("""
-        <div class="title-section">
-            <h1 class="title-main">LLM under the hood</h1>
-            <p class="title-subtitle">
-                Observe the internal mechanisms of language models as they process information.<br>
-                See what happens when you tell an LLM it's wrong.
-            </p>
-        </div>
-        """)
-
-        gr.HTML("""
-        <div class="guide-inline">
-            <strong>How it works:</strong> Ask a question with a one-word answer. Watch the model's attention patterns,
-            layer-by-layer predictions, and probability distributions. Correct the model to see how it adapts its internal representations.
-            <br><br>
-            <strong>Example:</strong> "What color is banana?" → Model answers → Tell it "That's wrong" or provide the correct answer → Compare before and after.
-            <br><br>
-            <strong>Model:</strong> TinyLlama-1.1B (22 layers, ~2-5 seconds per response)
-        </div>
+        <section class="title-section">
+            <div class="title-grid">
+                <div class="title-copy">
+                    <h1 class="title-main">LLM under the hood</h1>
+                    <p class="title-subtitle">Follow a compact transformer as it reads your question, weighs every word, and settles on a one-word reply.</p>
+                    <details class="usage-details">
+                        <summary>How to use this app</summary>
+                        <div class="usage-body">
+                            <p>Ask a short factual question, let the model answer once, then inspect each tab to see how it justified the choice.</p>
+                            <ol>
+                                <li>Start with a question like <em>What is the capital of Australia?</em></li>
+                                <li>Check Attention, Softmax, and Layers to understand the first attempt.</li>
+                                <li>Press <strong>That's Wrong</strong> or supply the correct token, then compare before vs. after.</li>
+                            </ol>
+                            <p class="usage-meta"><strong>Model:</strong> TinyLlama-1.1B · 22 transformer layers · ~2–5s per turn</p>
+                        </div>
+                    </details>
+                </div>
+                <div class="pipeline-card">
+                    <h4>Transformer pipeline checklist</h4>
+                    <ol>
+                        <li><span>Tokenise prompt</span></li>
+                        <li><span>Share context via attention</span></li>
+                        <li><span>Refine through feed-forward layers</span></li>
+                        <li><span>Score candidates & apply softmax</span></li>
+                        <li><span>Sample the top token</span></li>
+                    </ol>
+                </div>
+            </div>
+        </section>
         """)
 
         gr.HTML('<div class="section-divider"></div>')
 
-        empty_attention_html = "<em>Run the model to see how attention focuses on your question.</em>"
-        empty_softmax_html = "<em>Run the model to see which words had the highest probability.</em>"
-        empty_layers_html = "<em>Run the model to see how confidence evolves across layers.</em>"
+        empty_attention_html = "<em>Run the model to list attention percentages for every word in your prompt and context.</em>"
+        empty_attention_heatmap = "<em>Run the model to visualise the full attention heatmap.</em>"
+        empty_softmax_html = "<em>Run the model to reveal the top candidate words and their probabilities.</em>"
+        empty_softmax_waterfall = "<em>Run the model to watch logits turn into probabilities.</em>"
+        empty_layers_html = "<em>Run the model to chart how confidence evolves across layers.</em>"
+        empty_layers_sparkline = "<em>Run the model to trace the confidence sparkline.</em>"
         correction_placeholder = "_Generate an answer and press “That’s Wrong” to compare before and after._"
 
         with gr.Tabs():
             with gr.Tab("Query"):
                 gr.Markdown("### Ask the model a quick fact")
-                gr.Markdown("Keep it simple: questions like **What is the capital of Australia?** work best because the answer is a single word.")
+                gr.Markdown(
+                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word."
+                )
 
                 question_input = gr.Textbox(
                     label="",
@@ -845,24 +1478,37 @@ def main_interface():
                     interactive=False
                 )
 
-                query_overview_md = gr.Markdown("_Run the model to see how it pieces the answer together._")
+                query_overview_md = gr.Markdown(
+                    "_Run the model to see how it read your prompt, picked a candidate, and justified the choice._"
+                )
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
-                        gr.Markdown("Orange bars show which words the model stared at most when forming the answer.")
+                        gr.Markdown(
+                            "Every word from your prompt and any added context appears here with an attention percentage so you can see what the model reread."
+                        )
                         query_attention_panel = gr.HTML(empty_attention_html)
+                        query_attention_heatmap = gr.HTML(empty_attention_heatmap)
 
                     with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("Purple bars reveal the probability of the top candidate words before the model committed.")
+                        gr.Markdown(
+                            "Purple bars reveal the probability of the highest-scoring candidate words just before the model spoke."
+                        )
                         query_softmax_panel = gr.HTML(empty_softmax_html)
+                        query_softmax_waterfall = gr.HTML(empty_softmax_waterfall)
 
                     with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Blue cards track how confidence in the final word builds as we move through deeper layers.")
+                        gr.Markdown(
+                            "Blue cards track how confidence in the final word grows as information flows through deeper transformer layers."
+                        )
                         query_layers_panel = gr.HTML(empty_layers_html)
+                        query_layers_sparkline = gr.HTML(empty_layers_sparkline)
 
             with gr.Tab("Correction"):
                 gr.Markdown("### Teach the model when it slips")
-                gr.Markdown("First, tell the model its answer was off. Then optionally supply the right word so it can adjust.")
+                gr.Markdown(
+                    "Challenge the answer and optionally provide the correct word. The comparison panels show exactly how the internal signals respond to your feedback."
+                )
 
                 wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm")
 
@@ -880,20 +1526,26 @@ def main_interface():
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
-                        gr.Markdown("Compare how the orange attention weights shift after feedback.")
+                        gr.Markdown("See how focus on each prompt or context word changes once the correction is in play.")
                         correction_attention_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("See how the probability mass moves toward the corrected word.")
+                        gr.Markdown("Check whether the corrected word overtakes its competitors in the probability slate.")
                         correction_softmax_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Check whether deeper layers now lock onto the corrected answer sooner.")
+                        gr.Markdown("Look for deeper layers to embrace the corrected answer sooner or with greater certainty.")
                         correction_layers_panel = gr.HTML("<em>No comparison yet.</em>")
+
+                    with gr.Tab("Δ Impact"):
+                        gr.Markdown("Read this tab for the biggest attention, probability, and layer shifts triggered by your feedback.")
+                        correction_delta_panel = gr.HTML("<em>No comparison yet.</em>")
 
             with gr.Tab("Theory"):
                 gr.Markdown("### Peek behind the math")
-                gr.Markdown("These notes unpack what the TinyLlama is doing internally, then dive into the colour-coded pieces you see across the app.")
+                gr.Markdown(
+                    "These notes explain the coloured panels in everyday language before linking them back to the underlying equations."
+                )
 
                 theory_overview_md = gr.Markdown(THEORY_TEXT["overview"])
                 theory_feedback_md = gr.Markdown(THEORY_TEXT["feedback"])
@@ -919,14 +1571,19 @@ def main_interface():
                     "Please enter a question!",
                     "_Ask something like “What is the capital of Australia?”_",
                     empty_attention_html,
+                    empty_attention_html,
+                    empty_attention_heatmap,
                     empty_softmax_html,
+                    empty_softmax_waterfall,
                     empty_layers_html,
+                    empty_layers_sparkline,
                     THEORY_TEXT["overview"],
                     THEORY_TEXT["feedback"],
                     THEORY_TEXT["attention"],
                     THEORY_TEXT["softmax"],
                     THEORY_TEXT["layers"],
                     correction_placeholder,
+                    "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -940,14 +1597,18 @@ def main_interface():
                     answer,
                     payload,
                     empty_attention_html,
+                    empty_attention_heatmap,
                     empty_softmax_html,
+                    empty_softmax_waterfall,
                     empty_layers_html,
+                    empty_layers_sparkline,
                     THEORY_TEXT["overview"],
                     THEORY_TEXT["feedback"],
                     THEORY_TEXT["attention"],
                     THEORY_TEXT["softmax"],
                     THEORY_TEXT["layers"],
                     correction_placeholder,
+                    "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -962,14 +1623,18 @@ def main_interface():
                 answer,
                 payload["overview"],
                 payload["attention"]["markdown"],
+                payload["attention"]["heatmap"],
                 payload["softmax"]["markdown"],
+                payload["softmax"]["waterfall"],
                 payload["layers"]["markdown"],
+                payload["layers"]["sparkline"],
                 payload["theory"]["overview"],
                 payload["theory"]["feedback"],
                 payload["theory"]["attention"],
                 payload["theory"]["softmax"],
                 payload["theory"]["layers"],
                 "_Click “That’s Wrong” to see how feedback reshapes the internals._",
+                "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
                 "<em>No comparison yet.</em>",
@@ -980,6 +1645,7 @@ def main_interface():
             if not question or question not in original_answer_cache:
                 return (
                     "⚠️ Please generate an answer first!",
+                    "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -998,9 +1664,10 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
                 )
 
-            summary, attention_html, softmax_html, layers_html = build_correction_sections(
+            summary, attention_html, softmax_html, layers_html, delta_html = build_correction_sections(
                 question,
                 original_answer,
                 original_payload,
@@ -1009,7 +1676,7 @@ def main_interface():
                 corrected_payload,
             )
 
-            return summary, attention_html, softmax_html, layers_html
+            return summary, attention_html, softmax_html, layers_html, delta_html
 
         def on_correction(question, correction):
             """Handle manual correction with specific answer."""
@@ -1019,11 +1686,13 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
                 )
 
             if not question or question not in original_answer_cache:
                 return (
                     "⚠️ Please generate an answer first!",
+                    "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -1042,9 +1711,10 @@ def main_interface():
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
+                    "<em>No comparison yet.</em>",
                 )
 
-            summary, attention_html, softmax_html, layers_html = build_correction_sections(
+            summary, attention_html, softmax_html, layers_html, delta_html = build_correction_sections(
                 question,
                 original_answer,
                 original_payload,
@@ -1053,7 +1723,7 @@ def main_interface():
                 corrected_payload,
             )
 
-            return summary, attention_html, softmax_html, layers_html
+            return summary, attention_html, softmax_html, layers_html, delta_html
 
         generate_btn.click(
             fn=on_generate,
@@ -1062,8 +1732,11 @@ def main_interface():
                 response_output,
                 query_overview_md,
                 query_attention_panel,
+                query_attention_heatmap,
                 query_softmax_panel,
+                query_softmax_waterfall,
                 query_layers_panel,
+                query_layers_sparkline,
                 theory_overview_md,
                 theory_feedback_md,
                 theory_attention_md,
@@ -1073,6 +1746,7 @@ def main_interface():
                 correction_attention_panel,
                 correction_softmax_panel,
                 correction_layers_panel,
+                correction_delta_panel,
             ],
             show_progress="full"
         )
@@ -1085,6 +1759,7 @@ def main_interface():
                 correction_attention_panel,
                 correction_softmax_panel,
                 correction_layers_panel,
+                correction_delta_panel,
             ],
             show_progress="full"
         )
@@ -1097,6 +1772,7 @@ def main_interface():
                 correction_attention_panel,
                 correction_softmax_panel,
                 correction_layers_panel,
+                correction_delta_panel,
             ],
             show_progress="full"
         )
