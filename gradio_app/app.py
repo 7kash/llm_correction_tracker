@@ -12,7 +12,7 @@ import math
 import re
 
 import gradio as gr
-from typing import List, Tuple, Dict, Set, Optional
+from typing import List, Tuple, Dict, Optional
 
 from backend.llm_with_internals import LLMWithInternals
 from visualizations.answer_flow import get_clean_words, clean_token
@@ -20,6 +20,7 @@ from visualizations.answer_flow import get_clean_words, clean_token
 
 # Global model instance (loaded once)
 MODEL = None
+DEFAULT_TEMPERATURE = 0.2
 
 
 def load_model():
@@ -56,86 +57,94 @@ def _format_percentage_bar(
     )
 
 
-def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]], str]:
-    """Return attention percentages for every prompt/context word with formatted HTML."""
-    attention_percentages = internals.get("attention_percentages")
-    if attention_percentages is None:
-        return [], "_Attention data is not available for this turn yet._"
-
-    input_tokens = internals.get("input_tokens", [])
-    question = internals.get("question", "")
-    context = internals.get("context", "")
-    if not question and not context:
-        return [], "_Provide a prompt to see attention percentages._"
+def _prepare_prompt_word_rows(internals: dict) -> Tuple[List[dict], str, Optional[str]]:
+    """Return ordered prompt/context words aligned with their token indices."""
 
     def split_words(text: str) -> List[str]:
         if not text:
             return []
         return [word for word in re.split(r"[^0-9A-Za-z']+", text) if word]
 
-    question_words = split_words(question)
-    context_words = split_words(context)
+    def normalise_word(text: str) -> str:
+        return re.sub(r"[^0-9A-Za-z']+", "", (text or "")).lower()
 
-    word_sources: Dict[str, Set[str]] = {}
-    display_lookup: Dict[str, str] = {}
-    ordered_keys: List[str] = []
-
-    for word in question_words:
-        lowered = word.lower()
-        if not lowered:
-            continue
-        if lowered not in word_sources:
-            ordered_keys.append(lowered)
-            display_lookup[lowered] = word
-            word_sources[lowered] = set()
-        word_sources[lowered].add("Prompt")
-
-    for word in context_words:
-        lowered = word.lower()
-        if not lowered:
-            continue
-        if lowered not in word_sources:
-            ordered_keys.append(lowered)
-            display_lookup[lowered] = word
-            word_sources[lowered] = set()
-        word_sources[lowered].add("Context")
-
-    if not ordered_keys:
-        return [], "_No prompt words were captured for attention tracking._"
-
-    word_token_map: Dict[str, Dict[str, List[int]]] = {}
-    for word, token_indices in get_clean_words(input_tokens):
-        lowered = word.lower().strip()
-        if not lowered:
-            continue
-        entry = word_token_map.setdefault(lowered, {"display": word, "indices": []})
-        entry["indices"].extend(token_indices)
-
-    metrics: List[Tuple[str, float]] = []
-    metric_rows: List[str] = []
-
+    question = internals.get("question", "")
+    context = internals.get("context", "")
     prompt_html = "<div class=\"prompt-summary\">"
     prompt_html += f"<strong>Prompt:</strong> {html.escape(question) if question else '—'}"
     if context:
         prompt_html += f"<br><strong>Context:</strong> {html.escape(context)}"
     prompt_html += "</div>"
 
-    for lowered in ordered_keys:
-        entry = word_token_map.get(lowered)
-        display_word = entry["display"] if entry else display_lookup.get(lowered, lowered)
+    if not question and not context:
+        return [], prompt_html, "_Provide a prompt to see attention percentages._"
+
+    ordered_words: List[dict] = []
+    for source, raw_text in (("Prompt", question), ("Context", context)):
+        for word in split_words(raw_text):
+            ordered_words.append(
+                {
+                    "label": word,
+                    "key": normalise_word(word),
+                    "source": source,
+                }
+            )
+
+    if not ordered_words:
+        return [], prompt_html, "_No prompt words were captured for attention tracking._"
+
+    token_assignments: List[List[int]] = [None] * len(ordered_words)  # type: ignore
+    prompt_tokens = internals.get("input_tokens", [])
+    cleaned_tokens = list(get_clean_words(prompt_tokens))
+
+    for word, token_indices in cleaned_tokens:
+        key = normalise_word(word)
+        if not key:
+            continue
+        for idx, entry in enumerate(ordered_words):
+            if entry["key"] != key:
+                continue
+            if token_assignments[idx] is None:
+                token_assignments[idx] = list(token_indices)
+                break
+
+    rows: List[dict] = []
+    for idx, entry in enumerate(ordered_words):
+        rows.append(
+            {
+                "order": idx,
+                "label": entry["label"],
+                "source": entry["source"],
+                "token_indices": token_assignments[idx] or [],
+            }
+        )
+
+    return rows, prompt_html, None
+
+
+def _collect_attention_metrics(internals: dict) -> Tuple[List[Tuple[str, float]], str]:
+    """Return attention percentages for every prompt/context word with formatted HTML."""
+
+    attention_percentages = internals.get("attention_percentages")
+    if attention_percentages is None:
+        return [], "_Attention data is not available for this turn yet._"
+
+    rows, prompt_html, warning = _prepare_prompt_word_rows(internals)
+    if warning:
+        return [], prompt_html + warning
+
+    metrics: List[Tuple[str, float]] = []
+    metric_rows: List[str] = []
+
+    for row in rows:
         total_attention = 0.0
-        if entry:
-            for idx in entry["indices"]:
-                if idx < len(attention_percentages):
-                    total_attention += float(attention_percentages[idx])
-        sources = word_sources.get(lowered, {"Prompt"})
-        if len(sources) == 2:
-            source_label = "Prompt + Context"
-        else:
-            source_label = next(iter(sources))
-        metrics.append((display_word, total_attention))
+        for idx in row["token_indices"]:
+            if idx < len(attention_percentages):
+                total_attention += float(attention_percentages[idx])
+        source_label = row["source"]
+        metrics.append((row["label"], total_attention))
         metric_rows.append(
-            _format_percentage_bar(display_word, total_attention, "--attention-color", source_label)
+            _format_percentage_bar(row["label"], total_attention, "--attention-color", source_label)
         )
 
     metrics_html = "<div class=\"metric-list\">" + "".join(metric_rows) + "</div>"
@@ -274,71 +283,21 @@ def _render_attention_heatmap(heatmap: dict, internals: dict) -> str:
     if not heatmap:
         return "<em>Run the model to see a token-by-token attention heatmap.</em>"
 
-    prompt_tokens = heatmap.get("prompt_tokens") or []
     raw_output_tokens = heatmap.get("output_tokens") or []
     values = heatmap.get("values") or []
 
-    if not prompt_tokens or not raw_output_tokens or not values:
+    if not raw_output_tokens or not values:
         return "<em>Attention heatmap data is unavailable.</em>"
 
-    def normalise_word(text: str) -> str:
-        return re.sub(r"[^0-9A-Za-z']+", "", text or "").lower()
+    matched_rows, _, warning = _prepare_prompt_word_rows(
+        {
+            **internals,
+            "input_tokens": heatmap.get("prompt_tokens") or [],
+        }
+    )
 
-    def split_words(text: str) -> List[str]:
-        if not text:
-            return []
-        return [word for word in re.split(r"[^0-9A-Za-z']+", text) if word]
-
-    # Map user supplied words (question + context) so we only show those rows.
-    ordered_words: List[dict] = []
-    for source, raw_text in (("Question", internals.get("question", "")), ("Context", internals.get("context", ""))):
-        for word in split_words(raw_text):
-            ordered_words.append(
-                {
-                    "key": normalise_word(word),
-                    "label": word,
-                    "source": source,
-                }
-            )
-
-    input_words = get_clean_words(prompt_tokens)
-    matched_rows = []
-    used_indices: Set[int] = set()
-
-    for cleaned_word, token_indices in input_words:
-        key = normalise_word(cleaned_word)
-        if not key:
-            continue
-        matched_index = next(
-            (idx for idx, entry in enumerate(ordered_words) if idx not in used_indices and entry["key"] == key),
-            None,
-        )
-        if matched_index is None:
-            continue
-
-        used_indices.add(matched_index)
-        entry = ordered_words[matched_index]
-        matched_rows.append(
-            {
-                "order": matched_index,
-                "label": entry["label"],
-                "source": entry["source"],
-                "token_indices": token_indices,
-            }
-        )
-
-    # Include any remaining user words that did not map to tokens (zero attention rows).
-    for idx, entry in enumerate(ordered_words):
-        if idx in used_indices:
-            continue
-        matched_rows.append(
-            {
-                "order": idx,
-                "label": entry["label"],
-                "source": entry["source"],
-                "token_indices": [],
-            }
-        )
+    if warning and not matched_rows:
+        return warning.replace("attention percentages", "attention heatmap")
 
     if not matched_rows:
         return "<em>No prompt or context words were detected for the heatmap.</em>"
@@ -477,6 +436,10 @@ def _render_softmax_waterfall(metrics: List[dict], temperature: Optional[float] 
             "<div class=\"waterfall-heading\"><strong>Softmax waterfall</strong> — track each token from raw logit through exponentiation to the final probability.</div>"
         )
 
+    explainer += (
+        "<p class=\"waterfall-note\">Read the columns left to right: the first shows the raw logit (after temperature), the middle shows the exponentiated value before normalisation, and the final purple bar is the true probability that feeds sampling.</p>"
+    )
+
     return (
         "<div class=\"waterfall-wrapper\">"
         + explainer
@@ -506,11 +469,18 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
     area_points = " ".join([f"{padding},{height - padding}"] + points + [f"{padding + step * (len(confidences) - 1):.1f},{height - padding}"])
     polyline_points = " ".join(points)
     final_token = generated_tokens[0] if generated_tokens else "the answer"
-
-    tick_labels = "".join(
-        f"<span class=\"sparkline-tick\" style=\"left:{padding + step * idx:.1f}px;\">{idx}</span>"
-        for idx in range(len(confidences))
-    )
+    axis_y = height - padding
+    axis_end = padding + step * max(1, len(confidences) - 1)
+    tick_marks = []
+    for idx in range(len(confidences)):
+        x = padding + step * idx
+        tick_marks.append(
+            f"<line x1='{x:.1f}' y1='{axis_y}' x2='{x:.1f}' y2='{axis_y + 6}' class='sparkline-tick-mark' />"
+        )
+        tick_marks.append(
+            f"<text x='{x:.1f}' y='{axis_y + 18}' class='sparkline-tick-label'>{idx}</text>"
+        )
+    ticks_svg = "".join(tick_marks)
 
     return (
         "<div class=\"sparkline-wrapper\">"
@@ -519,8 +489,10 @@ def _render_layer_sparkline(metrics: List[dict], generated_tokens: List[str]) ->
         f"<svg viewBox=\"0 0 {width} {height}\" class=\"sparkline\">"
         f"<path d=\"M {area_points} Z\" class=\"sparkline-area\" />"
         f"<polyline points=\"{polyline_points}\" class=\"sparkline-line\" />"
+        f"<line x1='{padding}' y1='{axis_y}' x2='{axis_end:.1f}' y2='{axis_y}' class=\"sparkline-axis-line\" />"
+        f"<text x='{axis_end:.1f}' y='{axis_y + 32}' class=\"sparkline-axis-caption\">Layer →</text>"
+        f"{ticks_svg}"
         "</svg>"
-        f"<div class=\"sparkline-axis\"><span class=\"sparkline-axis-label\">Layer →</span>{tick_labels}</div>"
         "</div>"
     )
 
@@ -680,88 +652,78 @@ def _build_pipeline_html(
 
 THEORY_TEXT = {
     "overview": """
-### How a transformer answers your question
+### Start with the transformer
 
-<div class=\"section-note pill-softmax\"><strong>High-level flow:</strong> a question is turned into tokens, each pass through the network refines their meaning, and the model finally chooses the next word by comparing many possibilities.</div>
+Transformers treat language as a sequence of tokens. Each token becomes a vector, borrows context from its neighbours through self-attention, flows through stacked feed-forward blocks, and finally receives a score for how likely it is to appear next.
 
-1. **Embedding & position sense.** The text is split into sub-word pieces and turned into vectors that encode meaning plus order.
-2. **Attention exchanges.** Each layer lets tokens borrow context from one another, so the model can pick out the words that really matter.
-3. **Layer updates.** Feed-forward blocks transform the focused information into sharper internal features.
-4. **Prediction head.** The refined vector is scored against every vocabulary item, then softmax produces a clean probability distribution.
+**Why TinyLlama?** TinyLlama-1.1B is an open chat model with about 1.1 billion parameters. That is far smaller than ChatGPT’s GPT-4, so responses can be rougher, but the compact size lets this app expose every attention map, logit, and hidden state for learning.
 
-This app surfaces the three most important snapshots: attention weights (what it focused on), the softmax slate (which words competed), and the layer-by-layer probes (how certainty built up).
+#### The pipeline you'll watch
+1. **Tokenise & embed.** The question (and any correction) is split into tokens and turned into vectors with position information.
+2. **Share context via attention.** Tokens look back over the prompt to borrow the words that matter most for the next guess.
+3. **Refine through transformer layers.** Each of the 22 layers applies attention plus a feed-forward update to sharpen the meaning.
+4. **Score candidates.** The final representation is compared with the vocabulary to produce a logit score for every possible next token.
+5. **Sample the next token.** Softmax converts the logits to probabilities, optionally adjusted by the temperature slider, and the top token is emitted.
 
-_Try it:_ ask a question, then scan the Query tab from left to right. The attention list and heatmap show what the model reread, the softmax bars plus waterfall reveal why one token won, and the sparkline shows how confidence built with depth.
+The checklist beside the title ticks through these stages as you run the model. The Query tab mirrors steps 2–5 in the orange attention view, the purple softmax panels, and the blue layer probes.
+
+_Try it:_ ask for a factual answer such as **What is the capital of Australia?** Run it twice—first with a cool temperature (~0.2) and then with a warmer one (~1.0)—and watch how the checklist and visualisations change.
 """.strip(),
     "feedback": """
-### What happens when you correct the model
+### What happens when you give feedback
 
-<div class=\"section-note pill-layers\"><strong>Why feedback matters:</strong> telling the model it is wrong nudges the internal state on the next run. The prompt now includes your hint, so attention, layer activations, and softmax scores shift toward the correction.</div>
+TinyLlama does not update its weights during this demo, but each new turn reuses the previous conversation. When you press a feedback button we prepend a short reminder to the next prompt, so the model recomputes every stage with your hint included.
 
-* **Attention.** The reminder phrase pulls focus toward the corrective words, so the model rereads the prompt with that constraint in mind.
-* **Layer dynamics.** Early layers incorporate the new clue, while deeper layers propagate it, pushing the correct answer higher.
-* **Softmax.** Competing tokens lose probability mass as the corrected token gathers stronger evidence.
+1. **That's Wrong.** We add a gentle nudge that the previous answer missed the mark and let the model try again.
+2. **Submit Correction.** We include the exact word you typed so attention, layers, and logits can aim directly at the expected answer.
 
-Even though weights are frozen, the conversation context acts like temporary memory: every new turn recomputes the internals using both the original question and your feedback.
+During the rerun you will see:
+* **Attention shifts.** Prompt words related to your feedback gather more weight.
+* **Layer dynamics.** The corrected answer usually gains probability earlier in the layer stack.
+* **Softmax rebalancing.** Competing tokens lose probability mass as the corrected token gathers evidence.
 
-_Try it:_ after spotting a mistake, press “That’s Wrong” and then open the Δ Impact tab. It distills which prompt words gained attention, how probabilities rebalanced, and which layers accelerated toward the right token.
+The Δ Impact tab summarises these changes so you can compare before vs after at a glance.
+
+_Try it:_ generate an answer, press **That’s Wrong**, then inspect the Δ Impact tab. Next, type the correct word and submit a correction to see how the three panels evolve.
 """.strip(),
     "attention": """
 ### How attention works
 
-<div class=\"section-note pill-attention\"><strong>Plain-language intuition:</strong> attention assigns a weight to each input word so the model can concentrate on the parts of the question that matter most for the next word it will say.</div>
+Attention lets each token decide which other tokens to reread before the model chooses the next word.
 
-**Formula:**
+1. Build three vectors for every token: **query** (what I am looking for), **key** (how relevant I am), and **value** (the information to copy).
+2. Compare each query with every key to get similarity scores, scale them to keep numbers stable, and apply softmax so they become percentages.
+3. Use those percentages to blend the value vectors, giving the model a focused summary tailored to the next prediction.
 
-$$\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$$
+The orange bar chart lists every word from your question or context with its total attention percentage. The heatmap underneath shows the same numbers broken down by output token so you can see which prompt words influenced each generated token.
 
-Step-by-step:
-
-1. Compare the current prediction vector (**Q**) with every word from the prompt (**K**) to see which ones feel related.
-2. Scale the scores by $1/\\sqrt{d_k}$ so large vectors do not explode the numbers.
-3. Use softmax to translate those scores into easy-to-read percentages.
-4. Blend the value vectors (**V**) using those percentages, giving the model a context summary tailored to the next word.
-
-The orange bars in the Query tab show which words grabbed the most weight for the final answer.
-
-_Try it:_ compare the bar chart with the heatmap underneath—every prompt and context word appears in both, so you can see how the percentages line up across repeated tokens.
+_Try it:_ read the percentage printed in a heatmap cell, then find the same word in the bar chart to confirm that the totals line up.
 """.strip(),
     "softmax": """
 ### How softmax turns scores into probabilities
 
-<div class=\"section-note pill-softmax\"><strong>Plain-language intuition:</strong> the model assigns a raw score to every possible next token. Softmax stretches those scores so that they add up to 100%, making it easy to see which word is most likely.</div>
+After the transformer layers we have a logit score for each vocabulary token. Softmax translates those scores into a probability distribution that sums to 100%.
 
-**Formula:**
+1. **Apply temperature.** Divide each logit by the slider value. Low temperatures (<1) sharpen differences; high ones (>1) flatten them.
+2. **Exponentiate.** Apply $e^{z}$ so larger scores grow disproportionately.
+3. **Normalise.** Divide by the sum of all exponentials to get the final probabilities.
 
-$$\\text{softmax}(z_i) = \\frac{e^{z_i}}{\\sum_j e^{z_j}}$$
+The purple list shows the top candidates after normalisation. The waterfall view tracks the same tokens through the logit, exponential, and probability stages so you can see where the decisive jump happens. The “Other tokens” row sweeps up any remaining mass so everything adds to 100%.
 
-What this means in practice:
-
-* Each candidate token gets exponentiated ($e^{z_i}$), exaggerating stronger evidence.
-* All exponentiated scores are normalised by their sum so they form a true probability distribution.
-* Even small score gaps can create big probability differences, which is why the purple bars can look decisive.
-
-**Temperature control:** the slider divides logits by $T$ before applying softmax. Values below 1 sharpen the distribution (the winner steals more mass); values above 1 flatten it so alternatives stay in play.
-
-
-Sampling or temperature tweaks would flatten or sharpen these probabilities, but here we keep it simple so the behaviour stays interpretable.
-
-_Try it:_ set a cool temperature (≈0.2) and a warm one (≈1.0), then compare the purple bars and the waterfall to see how the “exp” stage redistributes probability mass.
+_Try it:_ set the temperature to 0.2 and run a prompt, then set it to 1.0 and run again. Notice how the exponential column becomes more even at higher temperatures and how the probability bars spread out.
 """.strip(),
     "layers": """
-### Why layer-by-layer probes are helpful
+### Why layer-by-layer probes matter
 
-<div class=\"section-note pill-layers\"><strong>Plain-language intuition:</strong> each transformer layer refines the hidden representation of the answer. Probing with the logit lens shows how confidence in the final word grows as we move deeper into the network.</div>
+A transformer builds its answer gradually as information flows through each layer. By applying the final prediction head at every layer (a technique called the logit lens) we can estimate how confident the model would be if it stopped early.
 
-TinyLlama has 22 transformer layers. For every layer we temporarily plug in the final prediction head and read the implied probabilities:
+* **Early layers** capture broad topic hints, so the correct token may only lead slightly.
+* **Middle layers** integrate attention results and suppress incompatible options.
+* **Late layers** push the winning token far ahead, producing a near-certain probability.
 
-* **Early layers** capture broad topics (“this is about geography”). The correct word may only have a small lead.
-* **Middle layers** integrate attention results and rule out conflicting options.
-* **Late layers** sharpen the concept until one token clearly dominates.
+The blue cards show the top alternatives at each layer, while the sparkline plots the probability of the actual answer with layer numbers labelled along the x-axis.
 
-When feedback is applied, look for the blue cards to show the corrected token rising sooner or more steeply across the stack.
-
-_Try it:_ trace the sparkline after a correction—the slope should bend upward earlier if the hint helped.
+_Try it:_ after you submit a correction, look for the sparkline to bend upward sooner. That indicates the model embraced your hint earlier in the stack.
 """.strip(),
 }
 
@@ -981,7 +943,7 @@ def is_one_word_question(question: str) -> Tuple[bool, str]:
     return True, "Note: This works best with questions that have one-word answers (like 'What is X?' or 'Who is Y?')"
 
 
-def generate_one_word_answer(question: str, context: str = None, temperature: float = 0.2) -> Tuple[str, str]:
+def generate_one_word_answer(question: str, context: str = None, temperature: float = DEFAULT_TEMPERATURE) -> Tuple[str, str]:
     """
     Generate one-word answer and show layer-by-layer predictions (logit lens).
 
@@ -1183,6 +1145,7 @@ def main_interface():
             margin-top: 0.85rem;
             font-size: 0.85rem;
             color: #475569;
+            line-height: 1.6;
         }
 
         #pipeline-card {
@@ -1278,18 +1241,6 @@ def main_interface():
             margin: 0.8rem 0 0 0;
             font-size: 0.82rem;
             color: #075985;
-        }
-
-        #query-input-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1rem;
-            align-items: flex-end;
-        }
-
-        #query-input-row .gradio-textbox,
-        #query-input-row .gradio-slider {
-            flex: 1 1 280px;
         }
 
         #temperature-note {
@@ -1580,6 +1531,12 @@ def main_interface():
             font-weight: 600;
         }
 
+        .waterfall-note {
+            margin: 0.35rem 0 0.75rem 0;
+            font-size: 0.78rem;
+            color: #4338ca;
+        }
+
         .heatmap-table {
             width: 100%;
             border-collapse: collapse;
@@ -1619,7 +1576,8 @@ def main_interface():
             background: rgba(249, 115, 22, 0.15);
         }
 
-        .heatmap-source-question {
+        .heatmap-source-question,
+        .heatmap-source-prompt {
             color: #1e3a8a;
             background: rgba(30, 58, 138, 0.1);
         }
@@ -1690,25 +1648,28 @@ def main_interface():
             stroke-width: 2;
         }
 
-        .sparkline-axis {
-            position: relative;
-            margin-top: 0.35rem;
-            padding-left: 24px;
-            font-size: 0.72rem;
-            color: #0f172a;
+        .sparkline-axis-line {
+            stroke: #94a3b8;
+            stroke-width: 1;
         }
 
-        .sparkline-axis-label {
-            font-weight: 600;
-            margin-right: 0.5rem;
+        .sparkline-tick-mark {
+            stroke: #cbd5f5;
+            stroke-width: 1;
         }
 
-        .sparkline-axis .sparkline-tick {
-            position: absolute;
-            bottom: -0.1rem;
-            transform: translateX(-50%);
+        .sparkline-tick-label {
+            font-size: 0.65rem;
+            fill: #475569;
+            text-anchor: middle;
+            dominant-baseline: hanging;
+        }
+
+        .sparkline-axis-caption {
             font-size: 0.7rem;
-            color: #475569;
+            fill: #475569;
+            text-anchor: end;
+            font-weight: 600;
         }
 
         .delta-wrapper {
@@ -1773,30 +1734,30 @@ def main_interface():
                     <div class="title-copy">
                         <div class="title-heading">
                             <h1 class="title-main">LLM under the hood</h1>
-                            <span class="usage-label">How to use this app</span>
                         </div>
-                        <p class="title-subtitle">Explore how TinyLlama reads your prompt, balances competing tokens, and incorporates feedback when you correct it.</p>
+                        <p class="title-subtitle">Peek inside a transformer to follow how attention, layers, and softmax work together to choose the next word.</p>
                         <div class="usage-body">
+                            <span class="usage-label">How to use this app</span>
                             <ol class="usage-steps">
-                                <li>Ask a crisp factual question — the visualisations shine with single-word answers.</li>
-                                <li>Scan the Query tabs to match attention, probabilities, and layer confidence to the response.</li>
-                                <li>After the first try choose your feedback path:
+                                <li>Ask a crisp factual question — single-word answers make the internals easiest to read.</li>
+                                <li>Adjust the <strong>Temperature</strong> slider (right under the question box) to compare steady vs exploratory behaviour before you run.</li>
+                                <li>Scan the Query tabs from left to right to connect the attention bars, heatmap, softmax waterfall, and confidence sparkline to the answer.</li>
+                                <li>After the first try choose one feedback path:
                                     <ul>
-                                        <li><strong>That's Wrong</strong> injects a gentle nudge that the answer missed the mark.</li>
-                                        <li><strong>Submit Correction</strong> after typing the exact word you expect.</li>
+                                        <li><strong>That's Wrong</strong> tells TinyLlama to retry while keeping your question the same.</li>
+                                        <li><strong>Submit Correction</strong> sends the exact word you expect so the next turn can aim directly at it.</li>
                                     </ul>
                                 </li>
-                                <li>Adjust the <strong>Temperature</strong> slider before running to watch how hotter settings spread the softmax probabilities.</li>
                             </ol>
                         </div>
-                        <p class="usage-meta"><strong>Model:</strong> TinyLlama-1.1B · 22 transformer layers · ~2–5s per turn</p>
+                        <p class="usage-meta"><strong>Model:</strong> TinyLlama-1.1B is an open 1.1&nbsp;billion parameter chat transformer. It's far smaller than ChatGPT’s GPT-4, so it may make mistakes, but the compact size lets us expose every attention head, logit, and layer.</p>
                     </div>
                     """,
                     elem_id="title-copy",
                 )
                 pipeline_progress = gr.HTML(
-                    value="",
-                    visible=False,
+                    value=_build_pipeline_html(0, None, DEFAULT_TEMPERATURE),
+                    visible=True,
                     elem_id="pipeline-card",
                 )
 
@@ -1814,28 +1775,28 @@ def main_interface():
             with gr.Tab("Query"):
                 gr.Markdown("### Ask the model a quick fact")
                 gr.Markdown(
-                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word. Need more background? Jump to [Theory → Overview](#theory-overview)."
+                    "Use this tab to follow the model's first attempt. Short prompts such as **What is the capital of Australia?** work best because the answer should be a single word. Want the full story? 📘 [Read the overview theory](#theory-overview)."
                 )
 
-                with gr.Row(elem_id="query-input-row"):
-                    question_input = gr.Textbox(
-                        label="Question",
-                        placeholder="What is the capital of Australia?",
-                        lines=1,
-                        show_label=True,
-                        container=False
-                    )
-                    temperature_slider = gr.Slider(
-                        label="Temperature",
-                        minimum=0.1,
-                        maximum=1.5,
-                        step=0.05,
-                        value=0.2,
-                        info="Lower = confident & deterministic · Higher = exploratory & diverse",
-                    )
+                question_input = gr.Textbox(
+                    label="Question",
+                    placeholder="What is the capital of Australia?",
+                    lines=1,
+                    show_label=True,
+                    container=False
+                )
+                temperature_slider = gr.Slider(
+                    label="Temperature",
+                    minimum=0.1,
+                    maximum=1.5,
+                    step=0.05,
+                    value=DEFAULT_TEMPERATURE,
+                    info="Lower = confident & deterministic · Higher = exploratory & diverse",
+                    interactive=True,
+                )
 
                 gr.Markdown(
-                    "_Temperature rescales the logits before softmax. Lower values sharpen the winning token; higher values spread probability mass so near-miss words stay competitive._",
+                    "💡 **Temperature tip:** This slider rescales the logits before softmax. Cool settings (≈0.1–0.3) make the top token dominate, while warmer settings (≈0.8–1.2) keep more candidates alive so you can see probabilities redistribute.",
                     elem_id="temperature-note",
                 )
 
@@ -1854,21 +1815,21 @@ def main_interface():
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
                         gr.Markdown(
-                            "Every word from your prompt and any added context appears here with an attention percentage so you can see what the model reread. Read the primer in [Theory → Attention](#theory-attention)."
+                            "Every word from your prompt and any added context appears here with an attention percentage so you can see what the model reread. 📘 [Open the attention theory](#theory-attention)."
                         )
                         query_attention_panel = gr.HTML(empty_attention_html)
                         query_attention_heatmap = gr.HTML(empty_attention_heatmap)
 
                     with gr.Tab("🟣 Softmax"):
                         gr.Markdown(
-                            "Purple bars reveal the probability of the highest-scoring candidate words just before the model spoke. The waterfall pairs with [Theory → Softmax](#theory-softmax)."
+                            "Purple bars reveal the probability of the highest-scoring candidate words just before the model spoke. 📘 [Open the softmax theory](#theory-softmax)."
                         )
                         query_softmax_panel = gr.HTML(empty_softmax_html)
                         query_softmax_waterfall = gr.HTML(empty_softmax_waterfall)
 
                     with gr.Tab("🔵 Layer by Layer"):
                         gr.Markdown(
-                            "Blue cards track how confidence in the final word grows as information flows through deeper transformer layers. Compare what you see with [Theory → Layers](#theory-layers)."
+                            "Blue cards track how confidence in the final word grows as information flows through deeper transformer layers. 📘 [Open the layer theory](#theory-layers)."
                         )
                         query_layers_panel = gr.HTML(empty_layers_html)
                         query_layers_sparkline = gr.HTML(empty_layers_sparkline)
@@ -1876,7 +1837,7 @@ def main_interface():
             with gr.Tab("Correction"):
                 gr.Markdown("### Teach the model when it slips")
                 gr.Markdown(
-                    "Challenge the answer and optionally provide the correct word. The comparison panels show exactly how the internal signals respond to your feedback."
+                    "Challenge the answer and optionally provide the correct word. The comparison panels show exactly how the internal signals respond to your feedback. 📘 [See why feedback matters](#theory-feedback)."
                 )
 
                 wrong_btn = gr.Button("That's Wrong", variant="stop", size="sm")
@@ -1900,19 +1861,19 @@ def main_interface():
 
                 with gr.Tabs():
                     with gr.Tab("🟠 Attention"):
-                        gr.Markdown("See how focus on each prompt or context word changes once the correction is in play.")
+                        gr.Markdown("See how focus on each prompt or context word changes once the correction is in play. 📘 [Revisit the attention theory](#theory-attention).")
                         correction_attention_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🟣 Softmax"):
-                        gr.Markdown("Check whether the corrected word overtakes its competitors in the probability slate.")
+                        gr.Markdown("Check whether the corrected word overtakes its competitors in the probability slate. 📘 [Revisit the softmax theory](#theory-softmax).")
                         correction_softmax_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("🔵 Layer by Layer"):
-                        gr.Markdown("Look for deeper layers to embrace the corrected answer sooner or with greater certainty.")
+                        gr.Markdown("Look for deeper layers to embrace the corrected answer sooner or with greater certainty. 📘 [Revisit the layer theory](#theory-layers).")
                         correction_layers_panel = gr.HTML("<em>No comparison yet.</em>")
 
                     with gr.Tab("Δ Impact"):
-                        gr.Markdown("Read this tab for the biggest attention, probability, and layer shifts triggered by your feedback.")
+                        gr.Markdown("Read this tab for the biggest attention, probability, and layer shifts triggered by your feedback. 📘 [Review the feedback theory](#theory-feedback).")
                         correction_delta_panel = gr.HTML("<em>No comparison yet.</em>")
 
             with gr.Tab("Theory"):
@@ -1941,13 +1902,26 @@ def main_interface():
         def _make_cache_key(question: str, temperature: float) -> Tuple[str, float]:
             return (question.strip(), round(float(temperature), 3))
 
-        def on_generate_prepare(question: str, temperature: float):
-            if not question or not question.strip():
-                return gr.update(value="", visible=False)
+        def _build_idle_pipeline(temperature: float):
+            return gr.update(
+                value=_build_pipeline_html(0, None, temperature),
+                visible=True,
+            )
+
+        def _pipeline_prepare(question: str, temperature: float):
+            stripped = (question or "").strip()
+            if not stripped:
+                return _build_idle_pipeline(temperature)
             return gr.update(
                 value=_build_pipeline_html(completed_steps=1, active_step=2, temperature=temperature),
                 visible=True,
             )
+
+        def _pipeline_prepare_with_correction(question: str, _correction: str, temperature: float):
+            return _pipeline_prepare(question, temperature)
+
+        def on_temperature_change(temperature: float):
+            return _build_idle_pipeline(temperature)
 
         def on_generate(question, temperature):
             """Generate answer and update all tabs."""
@@ -1955,7 +1929,7 @@ def main_interface():
                 return (
                     "Please enter a question!",
                     "_Ask something like “What is the capital of Australia?”_",
-                    gr.update(value="", visible=False),
+                    _build_idle_pipeline(temperature),
                     empty_attention_html,
                     empty_attention_html,
                     empty_attention_heatmap,
@@ -1979,14 +1953,7 @@ def main_interface():
 
             if isinstance(payload, str):
                 # Error or guidance message
-                pipeline_update = (
-                    gr.update(value="", visible=False)
-                    if answer.startswith("❌")
-                    else gr.update(
-                        value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature),
-                        visible=True,
-                    )
-                )
+                pipeline_update = _build_idle_pipeline(temperature)
                 return (
                     answer,
                     payload,
@@ -2058,7 +2025,7 @@ def main_interface():
                 )
             if not stripped_question or entry is None:
                 return (
-                    gr.update(value="", visible=False),
+                    _build_idle_pipeline(temperature),
                     "⚠️ Please generate an answer first!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -2079,7 +2046,7 @@ def main_interface():
 
             if isinstance(corrected_payload, str):
                 return (
-                    gr.update(value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature), visible=True),
+                    _build_idle_pipeline(temperature),
                     corrected_payload,
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -2107,7 +2074,7 @@ def main_interface():
             """Handle manual correction with specific answer."""
             if not correction.strip():
                 return (
-                    gr.update(value="", visible=False),
+                    _build_idle_pipeline(temperature),
                     "⚠️ Please enter a correction!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -2129,7 +2096,7 @@ def main_interface():
                 )
             if not stripped_question or entry is None:
                 return (
-                    gr.update(value="", visible=False),
+                    _build_idle_pipeline(temperature),
                     "⚠️ Please generate an answer first!",
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -2150,7 +2117,7 @@ def main_interface():
 
             if isinstance(corrected_payload, str):
                 return (
-                    gr.update(value=_build_pipeline_html(len(PIPELINE_STEPS), None, temperature), visible=True),
+                    _build_idle_pipeline(temperature),
                     corrected_payload,
                     "<em>No comparison yet.</em>",
                     "<em>No comparison yet.</em>",
@@ -2175,7 +2142,7 @@ def main_interface():
             return pipeline_update, summary, attention_html, softmax_html, layers_html, delta_html
 
         generate_btn.click(
-            fn=on_generate_prepare,
+            fn=_pipeline_prepare,
             inputs=[question_input, temperature_slider],
             outputs=[pipeline_progress],
             queue=False,
@@ -2205,7 +2172,14 @@ def main_interface():
                 correction_layers_panel,
                 correction_delta_panel,
             ],
-            show_progress="full"
+            show_progress=False
+        )
+
+        wrong_btn.click(
+            fn=_pipeline_prepare,
+            inputs=[question_input, temperature_slider],
+            outputs=[pipeline_progress],
+            queue=False,
         )
 
         wrong_btn.click(
@@ -2219,7 +2193,14 @@ def main_interface():
                 correction_layers_panel,
                 correction_delta_panel,
             ],
-            show_progress="full"
+            show_progress=False
+        )
+
+        correction_btn.click(
+            fn=_pipeline_prepare_with_correction,
+            inputs=[question_input, correction_input, temperature_slider],
+            outputs=[pipeline_progress],
+            queue=False,
         )
 
         correction_btn.click(
@@ -2233,7 +2214,14 @@ def main_interface():
                 correction_layers_panel,
                 correction_delta_panel,
             ],
-            show_progress="full"
+            show_progress=False
+        )
+
+        temperature_slider.change(
+            fn=on_temperature_change,
+            inputs=[temperature_slider],
+            outputs=[pipeline_progress],
+            queue=False,
         )
         return demo
 
